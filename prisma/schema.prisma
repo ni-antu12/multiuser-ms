@@ -1,0 +1,47 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model FamilyGroup {
+  id        String   @id @default(cuid())
+  uuid      String   @unique @db.VarChar(8)  // UUID corto de 8 caracteres
+  leader    String   @db.VarChar(8)          // UUID corto del usuario líder
+  tokenApp  String   @map("token_app")
+  maxMembers Int     @default(8)             // Máximo de miembros permitidos
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  users User[]
+
+  @@map("family_groups")
+}
+
+model User {
+  id                String   @id @default(cuid())
+  uuid              String   @unique @db.VarChar(8)  // UUID corto de 8 caracteres
+  rut               String   @unique
+  familyGroupsUuid  String?  @map("family_groups_uuid") @db.VarChar(8)  // UUID corto del grupo familiar
+  email             String   @unique
+  username          String   @unique
+  password          String
+  firstName         String?
+  lastName          String?
+  isActive          Boolean  @default(true)
+  isLeader          Boolean  @default(false) @map("is_leader") // Indica si el usuario es líder
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relaciones
+  familyGroup FamilyGroup? @relation(fields: [familyGroupsUuid], references: [uuid], onDelete: Cascade)
+
+  @@map("users")
+}

@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: multiuser-postgres
+    environment:
+      POSTGRES_DB: multiuser_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  multiuser-ms:
+    build: .
+    container_name: backend-multiuser-ms
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      DATABASE_URL: "postgresql://postgres:password@postgres:5432/multiuser_db?schema=public"
+      PORT: ${PORT:-3000}
+      # Configuración para Cloud Run
+      FORMS_MICROSERVICE_URL: ${FORMS_MICROSERVICE_URL:-http://localhost:3001}
+      CLOUD_RUN_TIMEOUT: ${CLOUD_RUN_TIMEOUT:-10000}
+      CLOUD_RUN_API_KEY: ${CLOUD_RUN_API_KEY:-}
+      CLOUD_RUN_REGION: ${CLOUD_RUN_REGION:-us-central1}
+      CLOUD_RUN_PROJECT_ID: ${CLOUD_RUN_PROJECT_ID:-}
+    depends_on:
+      - postgres
+    command: sh -c "npx prisma generate && npm run start:dev"
+
+volumes:
+  postgres_data:
