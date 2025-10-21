@@ -15,10 +15,11 @@ export class CreateUserDto {
   uuid?: string;
 
   @ApiProperty({
-    description: 'RUT único del usuario',
+    description: 'RUT único del usuario (formato: 12345678-9)',
     example: '12345678-9'
   })
   @IsString()
+  @Matches(/^\d{1,8}-[\dkK]$/, { message: 'RUT debe tener el formato válido (ej: 12345678-9)' })
   rut: string;
 
   @ApiProperty({

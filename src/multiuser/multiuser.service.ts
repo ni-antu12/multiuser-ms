@@ -1,12 +1,11 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FormsMicroserviceService } from './forms-microservice.service';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateFamilyGroupDto } from './dto/create-family-group.dto';
 import { UpdateFamilyGroupDto } from './dto/update-family-group.dto';
 import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
+import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
@@ -16,9 +15,22 @@ export class MultiuserService {
     private formsMicroserviceService: FormsMicroserviceService
   ) {}
 
+  /**
+   * Genera un UUID corto de 8 caracteres alfanuméricos
+   * @returns UUID corto único
+   */
+  private generateShortUuid(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
   // ===== FAMILY GROUPS =====
   async createFamilyGroup(createFamilyGroupDto: CreateFamilyGroupDto, requestingUserUuid?: string) {
-    const { uuid, leader, tokenApp, maxMembers = 8 } = createFamilyGroupDto;
+    const { uuid = this.generateShortUuid(), leader, tokenApp, maxMembers = 8 } = createFamilyGroupDto;
 
     // Verificar si el grupo familiar ya existe
     const existingGroup = await this.prisma.familyGroup.findUnique({
@@ -71,7 +83,155 @@ export class MultiuserService {
       }
     });
 
-    return familyGroup;
+    // Asociar líder al grupo automáticamente
+    const leaderUser = await this.prisma.user.update({
+      where: { uuid: leader },
+      data: { 
+        familyGroupsUuid: familyGroup.uuid,
+        isLeader: true
+      },
+      select: {
+        id: true,
+        uuid: true,
+        rut: true,
+        email: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        isActive: true,
+        isLeader: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    // Retornar grupo con información completa del líder
+    return {
+      familyGroup,
+      leader: leaderUser,
+      message: 'Grupo familiar creado exitosamente'
+    };
+  }
+
+  /**
+   * Crea automáticamente un grupo familiar para el paciente autenticado
+   * El paciente debe ser mayor de 18 años y no pertenecer a otro grupo
+   * @param userRut RUT del paciente autenticado
+   * @param dto Datos opcionales del grupo (tokenApp)
+   * @returns Grupo familiar y usuario creados
+   */
+  async createMyFamilyGroup(userRut: string, dto?: CreateMyFamilyGroupDto) {
+    // 1. Obtener datos del paciente desde BD Centro Médico (microservicio forms)
+    let patientData;
+    try {
+      patientData = await this.formsMicroserviceService.getPatientByRut(userRut);
+    } catch (error) {
+      // Si el microservicio no está disponible, buscar localmente
+      console.warn('Microservicio de formularios no disponible, buscando datos locales');
+      const localUser = await this.prisma.user.findUnique({ where: { rut: userRut } });
+      
+      if (!localUser) {
+        throw new NotFoundException('Paciente no encontrado en el sistema');
+      }
+      
+      // Simular datos del paciente para desarrollo
+      patientData = {
+        rut: localUser.rut,
+        email: localUser.email,
+        firstName: localUser.firstName || 'Paciente',
+        lastName: localUser.lastName || 'Sin Apellido',
+        username: localUser.username,
+        birthDate: '1990-01-01', // Fecha por defecto (mayor de 18)
+        isActive: localUser.isActive
+      };
+    }
+
+    // 2. Validar edad (mayor de 18)
+    const age = this.calculateAge(patientData.birthDate);
+    if (age < 18) {
+      throw new ForbiddenException('Debe ser mayor de 18 años para crear un grupo familiar');
+    }
+
+    // 3. Verificar si ya existe el usuario en nuestro sistema
+    let user = await this.prisma.user.findUnique({ where: { rut: userRut } });
+
+    if (user) {
+      // Validar que no esté en otro grupo
+      if (user.familyGroupsUuid) {
+        throw new ConflictException('Ya pertenece a un grupo familiar');
+      }
+
+      // Validar que no tenga ya un grupo como líder
+      const existingGroup = await this.prisma.familyGroup.findFirst({
+        where: { leader: user.uuid }
+      });
+
+      if (existingGroup) {
+        throw new ConflictException('Ya tiene un grupo familiar creado');
+      }
+
+      // Actualizar el flag de líder si no lo tiene
+      if (!user.isLeader) {
+        user = await this.prisma.user.update({
+          where: { uuid: user.uuid },
+          data: { isLeader: true }
+        });
+      }
+    } else {
+      // 4. Crear usuario líder (primera vez en el sistema)
+      const hashedPassword = await bcrypt.hash(this.generateRandomPassword(), 10);
+
+      user = await this.prisma.user.create({
+        data: {
+          uuid: this.generateShortUuid(),
+          rut: userRut,
+          email: patientData.email,
+          username: patientData.username || `patient_${userRut.split('-')[0]}`,
+          password: hashedPassword,
+          firstName: patientData.firstName,
+          lastName: patientData.lastName,
+          isActive: patientData.isActive ?? true,
+          isLeader: true,
+          familyGroupsUuid: null
+        }
+      });
+    }
+
+    // 5. Crear grupo familiar
+    const familyGroup = await this.prisma.familyGroup.create({
+      data: {
+        uuid: this.generateShortUuid(),
+        leader: user.uuid,
+        tokenApp: dto?.tokenApp || this.generateShortUuid(),
+        maxMembers: 8
+      }
+    });
+
+    // 6. Asociar líder al grupo (el líder ES miembro del grupo)
+    const updatedUser = await this.prisma.user.update({
+      where: { uuid: user.uuid },
+      data: { familyGroupsUuid: familyGroup.uuid },
+      select: {
+        id: true,
+        uuid: true,
+        rut: true,
+        familyGroupsUuid: true,
+        email: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        isActive: true,
+        isLeader: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
+
+    return {
+      familyGroup,
+      user: updatedUser,
+      message: 'Grupo familiar creado exitosamente'
+    };
   }
 
   async findAllFamilyGroups() {
@@ -182,120 +342,9 @@ export class MultiuserService {
       where: { uuid }
     });
 
-    return { message: 'Grupo familiar eliminado correctamente' };
+    return { message: 'Grupo familiar eliminado exitosamente' };
   }
 
-  // ===== USUARIOS =====
-  async createUser(createUserDto: CreateUserDto) {
-    const { password, ...userData } = createUserDto;
-
-    // Verificar si el usuario ya existe
-    const existingUser = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: userData.email },
-          { username: userData.username },
-          { rut: userData.rut },
-          { uuid: userData.uuid }
-        ]
-      }
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Usuario con este email, username, RUT o UUID ya existe');
-    }
-
-    // Verificar que el grupo familiar existe
-    const familyGroup = await this.prisma.familyGroup.findUnique({
-      where: { uuid: userData.familyGroupsUuid },
-      include: {
-        _count: {
-          select: { users: true }
-        }
-      }
-    });
-
-    if (!familyGroup) {
-      throw new NotFoundException('Grupo familiar no encontrado');
-    }
-
-    // Verificar si el grupo familiar tiene espacio disponible
-    if (familyGroup._count.users >= familyGroup.maxMembers) {
-      throw new ConflictException(`El grupo familiar ya tiene el máximo de ${familyGroup.maxMembers} miembros permitidos`);
-    }
-
-    // Encriptar contraseña
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Crear usuario
-    const user = await this.prisma.user.create({
-      data: {
-        uuid: userData.uuid,
-        rut: userData.rut,
-        email: userData.email,
-        username: userData.username,
-        password: hashedPassword,
-        firstName: userData.firstName,
-        lastName: userData.lastName,
-        isActive: userData.isActive,
-        isLeader: userData.isLeader || false,
-        familyGroup: {
-          connect: {
-            uuid: userData.familyGroupsUuid
-          }
-        }
-      },
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        familyGroupsUuid: true,
-        email: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true,
-        familyGroup: {
-          select: {
-            uuid: true,
-            leader: true,
-            tokenApp: true
-          }
-        }
-      }
-    });
-
-    return user;
-  }
-
-  async findAllUsers() {
-    return this.prisma.user.findMany({
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        familyGroupsUuid: true,
-        email: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true,
-        familyGroup: {
-          select: {
-            uuid: true,
-            leader: true,
-            tokenApp: true
-          }
-        }
-      }
-    });
-  }
 
   async findUserByUuid(uuid: string) {
     const user = await this.prisma.user.findUnique({
@@ -395,117 +444,6 @@ export class MultiuserService {
     return user;
   }
 
-  async updateUser(uuid: string, updateUserDto: UpdateUserDto, requestingUserUuid?: string) {
-    const { password, ...userData } = updateUserDto;
-
-    // Verificar si el usuario existe
-    const existingUser = await this.prisma.user.findUnique({
-      where: { uuid },
-      select: {
-        uuid: true,
-        familyGroupsUuid: true,
-        isLeader: true
-      }
-    });
-
-    if (!existingUser) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-
-    // Validar permisos: solo líderes pueden actualizar otros usuarios
-    // Los usuarios pueden actualizarse a sí mismos
-    if (requestingUserUuid && requestingUserUuid !== uuid) {
-      const hasLeaderPermissions = await this.validateLeaderPermissions(requestingUserUuid);
-      if (!hasLeaderPermissions) {
-        throw new ForbiddenException('Solo líderes pueden actualizar otros usuarios');
-      }
-
-      // Si es líder, debe pertenecer al mismo grupo familiar que el usuario a actualizar
-      if (existingUser.familyGroupsUuid) {
-        const hasGroupPermissions = await this.validateFamilyGroupPermissions(requestingUserUuid, existingUser.familyGroupsUuid);
-        if (!hasGroupPermissions) {
-          throw new ForbiddenException('Solo líderes del mismo grupo familiar pueden actualizar este usuario');
-        }
-      }
-    }
-
-    // Si se está actualizando la contraseña, encriptarla
-    let hashedPassword: string | undefined;
-    if (password) {
-      hashedPassword = await bcrypt.hash(password, 10);
-    }
-
-    // Actualizar usuario
-    const user = await this.prisma.user.update({
-      where: { uuid },
-      data: {
-        ...userData,
-        ...(hashedPassword && { password: hashedPassword }),
-      },
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        familyGroupsUuid: true,
-        email: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true,
-        familyGroup: {
-          select: {
-            uuid: true,
-            leader: true,
-            tokenApp: true
-          }
-        }
-      }
-    });
-
-    return user;
-  }
-
-  async deleteUser(uuid: string, requestingUserUuid?: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { uuid },
-      select: {
-        uuid: true,
-        familyGroupsUuid: true,
-        isLeader: true
-      }
-    });
-
-    if (!user) {
-      throw new NotFoundException('Usuario no encontrado');
-    }
-
-    // Validar permisos: solo líderes pueden eliminar otros usuarios
-    // Los usuarios pueden eliminarse a sí mismos
-    if (requestingUserUuid && requestingUserUuid !== uuid) {
-      const hasLeaderPermissions = await this.validateLeaderPermissions(requestingUserUuid);
-      if (!hasLeaderPermissions) {
-        throw new ForbiddenException('Solo líderes pueden eliminar otros usuarios');
-      }
-
-      // Si es líder, debe pertenecer al mismo grupo familiar que el usuario a eliminar
-      if (user.familyGroupsUuid) {
-        const hasGroupPermissions = await this.validateFamilyGroupPermissions(requestingUserUuid, user.familyGroupsUuid);
-        if (!hasGroupPermissions) {
-          throw new ForbiddenException('Solo líderes del mismo grupo familiar pueden eliminar este usuario');
-        }
-      }
-    }
-
-    await this.prisma.user.delete({
-      where: { uuid }
-    });
-
-    return { message: 'Usuario eliminado correctamente' };
-  }
-
   // ===== UTILIDADES =====
   async getUsersByFamilyGroup(familyGroupUuid: string) {
     const familyGroup = await this.prisma.familyGroup.findUnique({
@@ -576,44 +514,6 @@ export class MultiuserService {
     return familyGroup;
   }
 
-  // ===== MÉTODOS PARA GESTIÓN DE MIEMBROS =====
-  async getFamilyGroupMembersInfo(familyGroupUuid: string) {
-    const familyGroup = await this.prisma.familyGroup.findUnique({
-      where: { uuid: familyGroupUuid },
-      include: {
-        users: {
-          select: {
-            id: true,
-            uuid: true,
-            rut: true,
-            email: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-            isActive: true,
-            createdAt: true
-          }
-        },
-        _count: {
-          select: { users: true }
-        }
-      }
-    });
-
-    if (!familyGroup) {
-      throw new NotFoundException('Grupo familiar no encontrado');
-    }
-
-    return {
-      uuid: familyGroup.uuid,
-      leader: familyGroup.leader,
-      maxMembers: familyGroup.maxMembers,
-      currentMembers: familyGroup._count.users,
-      availableSlots: familyGroup.maxMembers - familyGroup._count.users,
-      isFull: familyGroup._count.users >= familyGroup.maxMembers,
-      users: familyGroup.users
-    };
-  }
 
   async canAddMemberToFamilyGroup(familyGroupUuid: string): Promise<boolean> {
     const familyGroup = await this.prisma.familyGroup.findUnique({
@@ -635,31 +535,6 @@ export class MultiuserService {
   // ===== VALIDACIÓN DE LÍDER =====
   async validateLeader(leaderUuid: string) {
     return this.formsMicroserviceService.validateLeader(leaderUuid);
-  }
-
-  // ===== MÉTODOS PARA CLOUD RUN =====
-  /**
-   * Verifica si el microservicio de formularios está disponible
-   * @returns true si está disponible, false en caso contrario
-   */
-  async isFormsMicroserviceAvailable(): Promise<boolean> {
-    return this.formsMicroserviceService.isServiceAvailable();
-  }
-
-  /**
-   * Obtiene la URL del microservicio de formularios
-   * @returns URL del microservicio
-   */
-  getFormsMicroserviceUrl(): string {
-    return this.formsMicroserviceService.getServiceUrl();
-  }
-
-  /**
-   * Verifica si está configurado para Cloud Run
-   * @returns true si es una URL de Cloud Run
-   */
-  isCloudRunConfigured(): boolean {
-    return this.formsMicroserviceService.isCloudRunConfigured();
   }
 
   // ===== LÍDERES =====
@@ -701,6 +576,7 @@ export class MultiuserService {
         firstName,
         lastName,
         isActive,
+        isLeader: true, // ✅ Establecer explícitamente como líder
         // Los líderes no están asociados a un grupo familiar inicialmente
         familyGroupsUuid: null
       }
@@ -737,6 +613,7 @@ export class MultiuserService {
   async findAllLeaders() {
     return this.prisma.user.findMany({
       where: {
+        isLeader: true, // ✅ Filtrar explícitamente por líderes
         familyGroupsUuid: null // Los líderes no están asociados a grupos familiares
       },
       select: {
@@ -763,6 +640,7 @@ export class MultiuserService {
     const leader = await this.prisma.user.findFirst({
       where: {
         uuid,
+        isLeader: true, // ✅ Filtrar explícitamente por líderes
         familyGroupsUuid: null
       },
       select: {
@@ -797,6 +675,7 @@ export class MultiuserService {
     const existingLeader = await this.prisma.user.findFirst({
       where: {
         uuid,
+        isLeader: true, // ✅ Filtrar explícitamente por líderes
         familyGroupsUuid: null
       }
     });
@@ -874,6 +753,7 @@ export class MultiuserService {
     const existingLeader = await this.prisma.user.findFirst({
       where: {
         uuid,
+        isLeader: true, // ✅ Filtrar explícitamente por líderes
         familyGroupsUuid: null
       }
     });
@@ -945,15 +825,33 @@ export class MultiuserService {
   }
 
   /**
-   * Genera un UUID corto de 8 caracteres
-   * @returns UUID corto
+   * Calcula la edad de una persona basándose en su fecha de nacimiento
+   * @param birthDate Fecha de nacimiento en formato ISO (YYYY-MM-DD)
+   * @returns Edad en años
    */
-  private generateShortUuid(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < 8; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
+  private calculateAge(birthDate: string): number {
+    const today = new Date();
+    const birth = new Date(birthDate);
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+      age--;
     }
-    return result;
+
+    return age;
+  }
+
+  /**
+   * Genera una contraseña aleatoria segura de 12 caracteres
+   * @returns Contraseña aleatoria
+   */
+  private generateRandomPassword(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < 12; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
   }
 }

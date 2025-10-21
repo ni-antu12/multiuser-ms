@@ -14,6 +14,16 @@ export interface LeaderValidationResponse {
   };
 }
 
+export interface PatientDataResponse {
+  rut: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  username?: string;
+  birthDate: string;
+  isActive: boolean;
+}
+
 @Injectable()
 export class FormsMicroserviceService {
   constructor(private readonly httpService: HttpService) {}
@@ -123,14 +133,6 @@ export class FormsMicroserviceService {
   }
 
   /**
-   * Verifica si el microservicio de formularios está disponible
-   * @returns true si está disponible, false en caso contrario
-   */
-  async isFormsMicroserviceAvailable(): Promise<boolean> {
-    return this.isServiceAvailable();
-  }
-
-  /**
    * Registra un nuevo líder en el microservicio de formularios dinámicos
    * @param leaderUuid UUID del líder
    * @param leaderData Datos del líder
@@ -213,6 +215,40 @@ export class FormsMicroserviceService {
       console.error('Error al eliminar líder en Cloud Run:', error.message);
       throw new HttpException(
         `Error al eliminar líder del microservicio de formularios dinámicos: ${error.message}`,
+        HttpStatus.SERVICE_UNAVAILABLE
+      );
+    }
+  }
+
+  /**
+   * Obtiene los datos de un paciente desde la BD del centro médico por RUT
+   * @param rut RUT del paciente
+   * @returns Datos del paciente
+   */
+  async getPatientByRut(rut: string): Promise<PatientDataResponse> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `${this.formsMicroserviceUrl}/api/patients/${rut}`,
+          {
+            headers: this.getHeaders(),
+            timeout: this.cloudRunTimeout
+          }
+        )
+      );
+
+      return response.data;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new HttpException(
+          'Paciente no encontrado en el sistema del centro médico',
+          HttpStatus.NOT_FOUND
+        );
+      }
+
+      console.error('Error al obtener datos del paciente:', error.message);
+      throw new HttpException(
+        `Error al obtener datos del paciente: ${error.message}`,
         HttpStatus.SERVICE_UNAVAILABLE
       );
     }

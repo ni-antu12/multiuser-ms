@@ -1,24 +1,21 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Headers, HttpException, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { MultiuserService } from './multiuser.service';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateFamilyGroupDto } from './dto/create-family-group.dto';
 import { UpdateFamilyGroupDto } from './dto/update-family-group.dto';
 import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
+import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 
 @ApiTags('multiuser')
 @Controller('multiuser')
 export class MultiuserController {
   constructor(private readonly multiuserService: MultiuserService) {}
 
-
-
   // ===== FAMILY GROUPS =====
   @ApiOperation({ 
-    summary: 'Crear grupo familiar',
-    description: 'Crea un nuevo grupo familiar con un UUID único, un usuario líder y un token de aplicación. El grupo puede tener hasta 8 miembros máximo. El líder debe ser un UUID válido de un usuario existente. SOLO el usuario líder puede crear el grupo familiar. Este endpoint valida que el líder existe y tiene permisos para crear grupos.'
+    summary: 'Crear grupo familiar (Manual/Administración)',
+    description: 'Crea un nuevo grupo familiar de forma manual proporcionando el UUID de un líder existente. El grupo puede tener hasta 8 miembros máximo. El líder se asocia automáticamente como miembro #1 del grupo. Este endpoint retorna información completa del grupo Y del líder (nombre, apellido, email, etc.). Ideal para administración o cuando no tienes acceso a la BD del centro médico.'
   })
   @ApiBody({
     description: 'Datos del grupo familiar a crear',
@@ -63,17 +60,40 @@ export class MultiuserController {
   })
   @ApiResponse({ 
     status: 201, 
-    description: 'Grupo familiar creado exitosamente',
+    description: 'Grupo familiar creado exitosamente. El líder se asocia automáticamente como miembro #1 del grupo.',
     schema: {
       type: 'object',
       properties: {
-        id: { type: 'string', example: 'clx1234567890abcdef' },
-        uuid: { type: 'string', example: 'aB3x9K2m' },
-        leader: { type: 'string', example: 'nP7vQ8rT' },
-        tokenApp: { type: 'string', example: 'token123' },
-        maxMembers: { type: 'number', example: 8 },
-        createdAt: { type: 'string', format: 'date-time' },
-        updatedAt: { type: 'string', format: 'date-time' }
+        familyGroup: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', example: 'clx1234567890abcdef' },
+            uuid: { type: 'string', example: 'aB3x9K2m' },
+            leader: { type: 'string', example: 'nP7vQ8rT' },
+            tokenApp: { type: 'string', example: 'token123' },
+            maxMembers: { type: 'number', example: 8 },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        leader: {
+          type: 'object',
+          description: 'Información completa del líder del grupo',
+          properties: {
+            id: { type: 'string', example: 'clx9876543210zyxwvu' },
+            uuid: { type: 'string', example: 'nP7vQ8rT' },
+            rut: { type: 'string', example: '12345678-9' },
+            email: { type: 'string', example: 'lider@ejemplo.com' },
+            username: { type: 'string', example: 'lider1' },
+            firstName: { type: 'string', example: 'Juan' },
+            lastName: { type: 'string', example: 'Pérez' },
+            isActive: { type: 'boolean', example: true },
+            isLeader: { type: 'boolean', example: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        message: { type: 'string', example: 'Grupo familiar creado exitosamente' }
       }
     }
   })
@@ -107,6 +127,123 @@ export class MultiuserController {
     @Headers('x-user-uuid') requestingUserUuid?: string
   ) {
     return this.multiuserService.createFamilyGroup(createFamilyGroupDto, requestingUserUuid);
+  }
+
+  @ApiOperation({ 
+    summary: '🏥 Crear mi grupo familiar (Centro Médico)',
+    description: 'Crea automáticamente un grupo familiar para el paciente autenticado. Este endpoint está diseñado específicamente para centros médicos donde los datos del paciente se obtienen desde la BD del centro. El sistema valida automáticamente que el paciente sea mayor de 18 años, no pertenezca a otro grupo y no tenga ya un grupo como líder. El líder se asocia automáticamente como el primer miembro del grupo.'
+  })
+  @ApiHeader({
+    name: 'X-User-RUT',
+    required: true,
+    description: 'RUT del paciente autenticado (obtenido del token de sesión)',
+    example: '12345678-9'
+  })
+  @ApiBody({
+    description: 'Datos opcionales del grupo (el tokenApp se genera automáticamente si no se proporciona)',
+    schema: {
+      type: 'object',
+      properties: {
+        tokenApp: {
+          type: 'string',
+          description: 'Token personalizado de la aplicación (opcional)',
+          example: 'mi_token_personalizado'
+        }
+      }
+    },
+    required: false
+  })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Grupo familiar creado exitosamente. El paciente ahora es líder y miembro #1 del grupo.',
+    schema: {
+      type: 'object',
+      properties: {
+        familyGroup: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', example: 'clx1234567890abcdef' },
+            uuid: { type: 'string', example: 'aB3x9K2m' },
+            leader: { type: 'string', example: 'nP7vQ8rT' },
+            tokenApp: { type: 'string', example: 'token123' },
+            maxMembers: { type: 'number', example: 8 },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', example: 'clx1234567890abcdef' },
+            uuid: { type: 'string', example: 'nP7vQ8rT' },
+            rut: { type: 'string', example: '12345678-9' },
+            familyGroupsUuid: { type: 'string', example: 'aB3x9K2m' },
+            email: { type: 'string', example: 'paciente@email.com' },
+            username: { type: 'string', example: 'patient_12345678' },
+            firstName: { type: 'string', example: 'Juan' },
+            lastName: { type: 'string', example: 'Pérez' },
+            isActive: { type: 'boolean', example: true },
+            isLeader: { type: 'boolean', example: true },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        message: { type: 'string', example: 'Grupo familiar creado exitosamente' }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: 403, 
+    description: 'El paciente es menor de 18 años',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 403 },
+        message: { type: 'string', example: 'Debe ser mayor de 18 años para crear un grupo familiar' },
+        error: { type: 'string', example: 'Forbidden' }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Paciente no encontrado en la BD del centro médico',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 404 },
+        message: { type: 'string', example: 'Paciente no encontrado en el sistema' },
+        error: { type: 'string', example: 'Not Found' }
+      }
+    }
+  })
+  @ApiResponse({ 
+    status: 409, 
+    description: 'El paciente ya pertenece a un grupo o ya tiene un grupo como líder',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 409 },
+        message: { 
+          type: 'string', 
+          example: 'Ya pertenece a un grupo familiar',
+          enum: ['Ya pertenece a un grupo familiar', 'Ya tiene un grupo familiar creado']
+        },
+        error: { type: 'string', example: 'Conflict' }
+      }
+    }
+  })
+  @Post('my-family-group')
+  createMyFamilyGroup(
+    @Headers('x-user-rut') userRut: string,
+    @Body() createMyFamilyGroupDto?: CreateMyFamilyGroupDto
+  ) {
+    if (!userRut) {
+      throw new HttpException(
+        'El header X-User-RUT es requerido',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+    return this.multiuserService.createMyFamilyGroup(userRut, createMyFamilyGroupDto);
   }
 
   @ApiOperation({ 
@@ -398,338 +535,6 @@ export class MultiuserController {
     return this.multiuserService.deleteFamilyGroup(uuid, leaderUuid);
   }
 
-  // ===== USUARIOS =====
-  @ApiOperation({ 
-    summary: 'Crear usuario',
-    description: 'Crea un nuevo usuario en el sistema. El usuario debe estar asociado a un grupo familiar existente. La contraseña se encripta automáticamente. Se valida que el grupo familiar tenga espacio disponible (máximo 8 miembros). Este endpoint verifica que el grupo familiar existe y tiene capacidad para nuevos miembros.'
-  })
-  @ApiBody({
-    description: 'Datos del usuario a crear',
-    schema: {
-      type: 'object',
-      required: ['rut', 'familyGroupsUuid', 'email', 'username', 'password'],
-      properties: {
-        uuid: {
-          type: 'string',
-          description: 'UUID corto de 8 caracteres. Si no se proporciona, se genera automáticamente',
-          example: 'mK8nP2xQ',
-          minLength: 8,
-          maxLength: 8
-        },
-        rut: {
-          type: 'string',
-          description: 'RUT único del usuario (formato: 12345678-9)',
-          example: '87654321-5'
-        },
-        familyGroupsUuid: {
-          type: 'string',
-          description: 'UUID del grupo familiar al que pertenece',
-          example: 'aB3x9K2m',
-          minLength: 8,
-          maxLength: 8
-        },
-        email: {
-          type: 'string',
-          description: 'Email único del usuario',
-          example: 'maria@ejemplo.com',
-          format: 'email'
-        },
-        username: {
-          type: 'string',
-          description: 'Nombre de usuario único (mínimo 3 caracteres)',
-          example: 'maria123',
-          minLength: 3
-        },
-        password: {
-          type: 'string',
-          description: 'Contraseña del usuario (mínimo 6 caracteres)',
-          example: 'password123',
-          minLength: 6
-        },
-        firstName: {
-          type: 'string',
-          description: 'Nombre del usuario',
-          example: 'María'
-        },
-        lastName: {
-          type: 'string',
-          description: 'Apellido del usuario',
-          example: 'González'
-        },
-        isActive: {
-          type: 'boolean',
-          description: 'Estado activo del usuario',
-          example: true,
-          default: true
-        }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 201, 
-    description: 'Usuario creado exitosamente',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', example: 'clx1234567890abcdef' },
-        uuid: { type: 'string', example: 'nP7vQ8rT' },
-        rut: { type: 'string', example: '12345678-9' },
-        familyGroupsUuid: { type: 'string', example: 'aB3x9K2m' },
-        email: { type: 'string', example: 'usuario@ejemplo.com' },
-        username: { type: 'string', example: 'usuario1' },
-        firstName: { type: 'string', example: 'Juan' },
-        lastName: { type: 'string', example: 'Pérez' },
-        isActive: { type: 'boolean', example: true },
-        createdAt: { type: 'string', format: 'date-time' },
-        updatedAt: { type: 'string', format: 'date-time' },
-        familyGroup: {
-          type: 'object',
-          properties: {
-            uuid: { type: 'string', example: 'aB3x9K2m' },
-            leader: { type: 'string', example: 'nP7vQ8rT' },
-            tokenApp: { type: 'string', example: 'token123' }
-          }
-        }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 409, 
-    description: 'Usuario con este email, username, RUT o UUID ya existe',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 409 },
-        message: { type: 'string', example: 'Usuario con este email, username, RUT o UUID ya existe' },
-        error: { type: 'string', example: 'Conflict' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Grupo familiar no encontrado',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 404 },
-        message: { type: 'string', example: 'Grupo familiar no encontrado' },
-        error: { type: 'string', example: 'Not Found' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 409, 
-    description: 'El grupo familiar ya tiene el máximo de miembros permitidos',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 409 },
-        message: { type: 'string', example: 'El grupo familiar ya tiene el máximo de 8 miembros permitidos' },
-        error: { type: 'string', example: 'Conflict' }
-      }
-    }
-  })
-  @Post('users')
-  createUser(@Body() createUserDto: CreateUserDto) {
-    return this.multiuserService.createUser(createUserDto);
-  }
-
-  @ApiOperation({ 
-    summary: 'Listar todos los usuarios',
-    description: 'Obtiene una lista completa de todos los usuarios en el sistema, incluyendo información de sus grupos familiares. Este endpoint es útil para administración, monitoreo del sistema y auditoría. Retorna información detallada de cada usuario y su grupo asociado.'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Lista de usuarios obtenida exitosamente',
-    schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', example: 'clx1234567890abcdef' },
-          uuid: { type: 'string', example: 'mK8nP2xQ' },
-          rut: { type: 'string', example: '87654321-5' },
-          familyGroupsUuid: { type: 'string', example: 'aB3x9K2m' },
-          email: { type: 'string', example: 'maria@ejemplo.com' },
-          username: { type: 'string', example: 'maria123' },
-          firstName: { type: 'string', example: 'María' },
-          lastName: { type: 'string', example: 'González' },
-          isActive: { type: 'boolean', example: true },
-          createdAt: { type: 'string', format: 'date-time' },
-          updatedAt: { type: 'string', format: 'date-time' },
-          familyGroup: {
-            type: 'object',
-            properties: {
-              uuid: { type: 'string', example: 'aB3x9K2m' },
-              leader: { type: 'string', example: 'nP7vQ8rT' },
-              tokenApp: { type: 'string', example: 'token123' }
-            }
-          }
-        }
-      }
-    }
-  })
-  @Get('users')
-  findAllUsers() {
-    return this.multiuserService.findAllUsers();
-  }
-
-
-
-  @ApiOperation({ 
-    summary: 'Actualizar usuario',
-    description: 'Actualiza la información de un usuario existente. Se pueden modificar todos los campos excepto el UUID. Si se proporciona una nueva contraseña, se encripta automáticamente. Se valida que los nuevos datos no conflictúen con otros usuarios.'
-  })
-  @ApiParam({
-    name: 'uuid',
-    description: 'UUID del usuario a actualizar',
-    example: 'mK8nP2xQ'
-  })
-  @ApiBody({
-    description: 'Datos del usuario a actualizar',
-    schema: {
-      type: 'object',
-      properties: {
-        rut: {
-          type: 'string',
-          description: 'Nuevo RUT único del usuario (formato: 12345678-9)',
-          example: '87654321-5'
-        },
-        familyGroupsUuid: {
-          type: 'string',
-          description: 'Nuevo UUID del grupo familiar',
-          example: 'aB3x9K2m',
-          minLength: 8,
-          maxLength: 8
-        },
-        email: {
-          type: 'string',
-          description: 'Nuevo email único del usuario',
-          example: 'nuevo@ejemplo.com',
-          format: 'email'
-        },
-        username: {
-          type: 'string',
-          description: 'Nuevo nombre de usuario único',
-          example: 'nuevoUsuario',
-          minLength: 3
-        },
-        password: {
-          type: 'string',
-          description: 'Nueva contraseña (se encripta automáticamente)',
-          example: 'nuevaPassword123',
-          minLength: 6
-        },
-        firstName: {
-          type: 'string',
-          description: 'Nuevo nombre del usuario',
-          example: 'Nuevo Nombre'
-        },
-        lastName: {
-          type: 'string',
-          description: 'Nuevo apellido del usuario',
-          example: 'Nuevo Apellido'
-        },
-        isActive: {
-          type: 'boolean',
-          description: 'Nuevo estado activo del usuario',
-          example: true
-        }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Usuario actualizado exitosamente',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', example: 'clx1234567890abcdef' },
-        uuid: { type: 'string', example: 'mK8nP2xQ' },
-        rut: { type: 'string', example: '87654321-5' },
-        familyGroupsUuid: { type: 'string', example: 'aB3x9K2m' },
-        email: { type: 'string', example: 'nuevo@ejemplo.com' },
-        username: { type: 'string', example: 'nuevoUsuario' },
-        firstName: { type: 'string', example: 'Nuevo Nombre' },
-        lastName: { type: 'string', example: 'Nuevo Apellido' },
-        isActive: { type: 'boolean', example: true },
-        createdAt: { type: 'string', format: 'date-time' },
-        updatedAt: { type: 'string', format: 'date-time' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Usuario no encontrado',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 404 },
-        message: { type: 'string', example: 'Usuario no encontrado' },
-        error: { type: 'string', example: 'Not Found' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 409, 
-    description: 'Usuario con este email, username o RUT ya existe',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 409 },
-        message: { type: 'string', example: 'Usuario con este email, username o RUT ya existe' },
-        error: { type: 'string', example: 'Conflict' }
-      }
-    }
-  })
-  @Patch('users/:uuid')
-  updateUser(
-    @Param('uuid') uuid: string, 
-    @Body() updateUserDto: UpdateUserDto,
-    @Headers('x-user-uuid') requestingUserUuid?: string
-  ) {
-    return this.multiuserService.updateUser(uuid, updateUserDto, requestingUserUuid);
-  }
-
-  @ApiOperation({ 
-    summary: 'Eliminar usuario',
-    description: 'Elimina un usuario del sistema. Esta operación es irreversible y elimina permanentemente todos los datos del usuario.'
-  })
-  @ApiParam({
-    name: 'uuid',
-    description: 'UUID del usuario a eliminar',
-    example: 'mK8nP2xQ'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Usuario eliminado exitosamente',
-    schema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', example: 'Usuario eliminado exitosamente' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Usuario no encontrado',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 404 },
-        message: { type: 'string', example: 'Usuario no encontrado' },
-        error: { type: 'string', example: 'Not Found' }
-      }
-    }
-  })
-  @Delete('users/:uuid')
-  deleteUser(
-    @Param('uuid') uuid: string,
-    @Headers('x-user-uuid') requestingUserUuid?: string
-  ) {
-    return this.multiuserService.deleteUser(uuid, requestingUserUuid);
-  }
-
   // ===== UTILIDADES =====
   @ApiOperation({ 
     summary: 'Obtener usuarios de un grupo familiar',
@@ -780,66 +585,6 @@ export class MultiuserController {
 
 
 
-  // ===== GESTIÓN DE MIEMBROS =====
-  @ApiOperation({ 
-    summary: 'Obtener información detallada de miembros del grupo',
-    description: 'Obtiene información completa sobre los miembros de un grupo familiar, incluyendo estadísticas como número actual de miembros, espacios disponibles, si el grupo está lleno, y lista detallada de todos los usuarios. Este endpoint proporciona una vista completa del estado del grupo y sus miembros.'
-  })
-  @ApiParam({
-    name: 'uuid',
-    description: 'UUID del grupo familiar',
-    example: 'aB3x9K2m'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Información de miembros obtenida exitosamente',
-    schema: {
-      type: 'object',
-      properties: {
-        uuid: { type: 'string', example: 'aB3x9K2m' },
-        leader: { type: 'string', example: 'nP7vQ8rT' },
-        maxMembers: { type: 'number', example: 8 },
-        currentMembers: { type: 'number', example: 3 },
-        availableSlots: { type: 'number', example: 5 },
-        isFull: { type: 'boolean', example: false },
-        users: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              uuid: { type: 'string' },
-              rut: { type: 'string' },
-              email: { type: 'string' },
-              username: { type: 'string' },
-              firstName: { type: 'string' },
-              lastName: { type: 'string' },
-              isActive: { type: 'boolean' },
-              createdAt: { type: 'string', format: 'date-time' }
-            }
-          }
-        }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'Grupo familiar no encontrado',
-    schema: {
-      type: 'object',
-      properties: {
-        statusCode: { type: 'number', example: 404 },
-        message: { type: 'string', example: 'Grupo familiar no encontrado' },
-        error: { type: 'string', example: 'Not Found' }
-      }
-    }
-  })
-  @Get('family-groups/:uuid/members-info')
-  getFamilyGroupMembersInfo(@Param('uuid') uuid: string) {
-    return this.multiuserService.getFamilyGroupMembersInfo(uuid);
-  }
-
-
 
   // ===== HEALTH CHECK =====
   @ApiOperation({ 
@@ -865,95 +610,6 @@ export class MultiuserController {
       timestamp: new Date().toISOString(),
       service: 'multiuser-microservice'
     };
-  }
-
-  // ===== VALIDACIÓN DE LÍDER =====
-  @ApiOperation({ 
-    summary: 'Validar usuario líder',
-    description: 'Valida si un usuario existe como líder en el microservicio de formularios dinámicos'
-  })
-  @ApiParam({
-    name: 'leaderUuid',
-    description: 'UUID del usuario líder a validar',
-    example: 'nP7vQ8rT'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Validación completada',
-    schema: {
-      type: 'object',
-      properties: {
-        exists: { type: 'boolean', example: true },
-        isLeader: { type: 'boolean', example: true },
-        userData: {
-          type: 'object',
-          properties: {
-            uuid: { type: 'string' },
-            email: { type: 'string' },
-            firstName: { type: 'string' },
-            lastName: { type: 'string' },
-            isActive: { type: 'boolean' }
-          }
-        }
-      }
-    }
-  })
-
-
-  // ===== CLOUD RUN CONNECTIVITY =====
-  @ApiOperation({ 
-    summary: 'Verificar conectividad con Cloud Run',
-    description: 'Verifica la conectividad con el microservicio de formularios dinámicos en Cloud Run'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Conectividad verificada',
-    schema: {
-      type: 'object',
-      properties: {
-        cloudRunConfigured: { type: 'boolean', example: true },
-        serviceUrl: { type: 'string', example: 'https://forms-microservice.run.app' },
-        isAvailable: { type: 'boolean', example: true },
-        timestamp: { type: 'string', format: 'date-time' }
-      }
-    }
-  })
-  @ApiResponse({ 
-    status: 503, 
-    description: 'Servicio de formularios no disponible',
-    schema: {
-      type: 'object',
-      properties: {
-        cloudRunConfigured: { type: 'boolean', example: true },
-        serviceUrl: { type: 'string', example: 'https://forms-microservice.run.app' },
-        isAvailable: { type: 'boolean', example: false },
-        error: { type: 'string', example: 'Service unavailable' },
-        timestamp: { type: 'string', format: 'date-time' }
-      }
-    }
-  })
-  @Get('cloud-run-status')
-  async getCloudRunStatus() {
-    const isAvailable = await this.multiuserService.isFormsMicroserviceAvailable();
-    const serviceUrl = this.multiuserService.getFormsMicroserviceUrl();
-    const cloudRunConfigured = this.multiuserService.isCloudRunConfigured();
-
-    if (isAvailable) {
-      return {
-        cloudRunConfigured,
-        serviceUrl,
-        isAvailable,
-        timestamp: new Date().toISOString()
-      };
-    } else {
-      throw new HttpException({
-        cloudRunConfigured,
-        serviceUrl,
-        isAvailable,
-        error: 'Service unavailable',
-        timestamp: new Date().toISOString()
-      }, HttpStatus.SERVICE_UNAVAILABLE);
-    }
   }
 
   // ===== LÍDERES =====
@@ -1058,32 +714,6 @@ export class MultiuserController {
     return this.multiuserService.createLeader(createLeaderDto);
   }
 
-  @ApiOperation({ 
-    summary: 'Listar todos los usuarios líderes',
-    description: 'Obtiene una lista completa de todos los usuarios líderes en el sistema. Los líderes son usuarios que pueden crear grupos familiares.'
-  })
-  @ApiResponse({ 
-    status: 200, 
-    description: 'Lista de usuarios líderes obtenida exitosamente',
-    schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          uuid: { type: 'string' },
-          rut: { type: 'string' },
-          email: { type: 'string' },
-          username: { type: 'string' },
-          firstName: { type: 'string' },
-          lastName: { type: 'string' },
-          isActive: { type: 'boolean' },
-          createdAt: { type: 'string', format: 'date-time' },
-          updatedAt: { type: 'string', format: 'date-time' }
-        }
-      }
-    }
-  })
   @ApiOperation({ 
     summary: 'Listar todos los usuarios líderes',
     description: 'Obtiene una lista completa de todos los usuarios líderes en el sistema. Los líderes son usuarios que pueden crear grupos familiares y no están asociados a grupos familiares específicos.'
