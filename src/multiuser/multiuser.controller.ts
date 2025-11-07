@@ -6,6 +6,7 @@ import { UpdateFamilyGroupDto } from './dto/update-family-group.dto';
 import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
+import { AddMemberDto } from './dto/add-member.dto';
 
 @ApiTags('multiuser')
 @Controller('multiuser')
@@ -237,13 +238,18 @@ export class MultiuserController {
     @Headers('x-user-rut') userRut: string,
     @Body() createMyFamilyGroupDto?: CreateMyFamilyGroupDto
   ) {
+    console.log('🎯 Controller: createMyFamilyGroup llamado con RUT:', userRut);
     if (!userRut) {
+      console.log('❌ Controller: Header X-User-RUT faltante');
       throw new HttpException(
         'El header X-User-RUT es requerido',
         HttpStatus.BAD_REQUEST
       );
     }
-    return this.multiuserService.createMyFamilyGroup(userRut, createMyFamilyGroupDto);
+    console.log('✅ Controller: Llamando al servicio SIMPLE...');
+    
+    // MÉTODO SIMPLE: Crear datos básicos directamente
+    return this.multiuserService.createMyFamilyGroupSimple(userRut, createMyFamilyGroupDto);
   }
 
   @ApiOperation({ 
@@ -580,11 +586,77 @@ export class MultiuserController {
   })
   @Get('family-groups/:uuid/users')
   getUsersByFamilyGroup(@Param('uuid') uuid: string) {
-    return this.multiuserService.getUsersByFamilyGroup(uuid);
+    return this.multiuserService.getFamilyGroupMembers(uuid);
   }
 
-
-
+  @ApiOperation({
+    summary: 'Agregar miembro a grupo familiar',
+    description: 'Agrega un nuevo miembro a un grupo familiar existente. Si el usuario ya existe en el sistema pero no está en un grupo, lo agrega al grupo. Si no existe, crea un nuevo usuario.'
+  })
+  @ApiParam({
+    name: 'uuid',
+    description: 'UUID del grupo familiar',
+    example: 'Y9juNwPL'
+  })
+  @ApiBody({
+    type: AddMemberDto,
+    description: 'Datos del nuevo miembro'
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Miembro agregado exitosamente',
+    schema: {
+      properties: {
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            uuid: { type: 'string' },
+            rut: { type: 'string' },
+            email: { type: 'string' },
+            username: { type: 'string' },
+            firstName: { type: 'string', nullable: true },
+            lastName: { type: 'string', nullable: true },
+            isActive: { type: 'boolean' },
+            isLeader: { type: 'boolean' },
+            familyGroupsUuid: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        message: { type: 'string', example: 'Miembro agregado al grupo familiar exitosamente' }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Grupo familiar no encontrado',
+    schema: {
+      properties: {
+        statusCode: { type: 'number', example: 404 },
+        message: { type: 'string', example: 'Grupo familiar no encontrado' },
+        error: { type: 'string', example: 'Not Found' }
+      }
+    }
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Conflicto. El grupo está lleno o el usuario ya pertenece a otro grupo.',
+    schema: {
+      properties: {
+        statusCode: { type: 'number', example: 409 },
+        message: { type: 'string', example: 'El grupo familiar ha alcanzado el máximo de miembros' },
+        error: { type: 'string', example: 'Conflict' }
+      }
+    }
+  })
+  @Post('family-groups/:uuid/members')
+  addMemberToFamilyGroup(
+    @Param('uuid') uuid: string,
+    @Body() addMemberDto: AddMemberDto
+  ) {
+    return this.multiuserService.addMemberToFamilyGroup(uuid, addMemberDto);
+  }
 
   // ===== HEALTH CHECK =====
   @ApiOperation({ 
@@ -740,11 +812,6 @@ export class MultiuserController {
       }
     }
   })
-  @Get('leaders')
-  findAllLeaders() {
-    return this.multiuserService.findAllLeaders();
-  }
-
   @ApiOperation({ 
     summary: 'Obtener usuario líder por UUID',
     description: 'Obtiene la información detallada de un usuario líder específico por su UUID.'
@@ -785,7 +852,16 @@ export class MultiuserController {
       }
     }
   })
+  @Get('leaders/:uuid')
+  findOneLeader(@Param('uuid') uuid: string) {
+    console.log('🔍 GET /multiuser/leaders/:uuid llamado con UUID:', uuid);
+    return this.multiuserService.findLeaderByUuid(uuid);
+  }
 
+  @Get('leaders')
+  findAllLeaders() {
+    return this.multiuserService.findAllLeaders();
+  }
 
   @ApiOperation({ 
     summary: 'Actualizar usuario líder',

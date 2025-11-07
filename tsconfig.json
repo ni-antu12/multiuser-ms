@@ -21,6 +21,8 @@
   "exclude": [
     "node_modules",
     "dist",
-    "mobile-app"
+    "mobile-app",
+    "multiuser-frontend",
+    "multiuser-mobile"
   ]
 }

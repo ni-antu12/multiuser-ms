@@ -31,10 +31,11 @@ model User {
   rut               String   @unique
   familyGroupsUuid  String?  @map("family_groups_uuid") @db.VarChar(8)  // UUID corto del grupo familiar
   email             String   @unique
-  username          String   @unique
+  username          String?  // Generado automáticamente, ya no es requerido
   password          String
   firstName         String?
-  lastName          String?
+  lastNamePaterno   String?  @map("last_name_paterno")
+  lastNameMaterno   String?  @map("last_name_materno")
   isActive          Boolean  @default(true)
   isLeader          Boolean  @default(false) @map("is_leader") // Indica si el usuario es líder
   createdAt         DateTime @default(now())

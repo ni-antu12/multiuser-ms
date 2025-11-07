@@ -29,23 +29,15 @@ export class CreateLeaderDto {
   @IsEmail()
   email: string;
 
-  @ApiProperty({
-    description: 'Nombre de usuario único del líder',
-    example: 'lider1',
-    minLength: 3
-  })
-  @IsString()
-  @MinLength(3)
-  username: string;
-
-  @ApiProperty({
-    description: 'Contraseña del usuario líder (mínimo 6 caracteres)',
+  @ApiPropertyOptional({
+    description: 'Contraseña del usuario líder. Si no se proporciona, se generará automáticamente',
     example: 'password123',
     minLength: 6
   })
   @IsString()
+  @IsOptional()
   @MinLength(6)
-  password: string;
+  password?: string;
 
   @ApiPropertyOptional({
     description: 'Nombre del usuario líder',
@@ -56,12 +48,20 @@ export class CreateLeaderDto {
   firstName?: string;
 
   @ApiPropertyOptional({
-    description: 'Apellido del usuario líder',
+    description: 'Apellido paterno del usuario líder',
     example: 'Pérez'
   })
   @IsString()
   @IsOptional()
-  lastName?: string;
+  lastNamePaterno?: string;
+
+  @ApiPropertyOptional({
+    description: 'Apellido materno del usuario líder',
+    example: 'González'
+  })
+  @IsString()
+  @IsOptional()
+  lastNameMaterno?: string;
 
   @ApiPropertyOptional({
     description: 'Estado activo del usuario líder',
