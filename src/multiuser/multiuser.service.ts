@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, HttpException, HttpStatus, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FormsMicroserviceService } from './forms-microservice.service';
 import { CreateFamilyGroupDto } from './dto/create-family-group.dto';
@@ -35,6 +35,42 @@ export class MultiuserService {
     return Math.random().toString(36).slice(-8);
   }
 
+  private async generateUniqueShortUuid(model: 'familyGroup' | 'user'): Promise<string> {
+    let attempts = 0;
+    while (attempts < 10) {
+      const candidate = this.generateShortUuid();
+      const exists =
+        model === 'familyGroup'
+          ? await this.prisma.familyGroup.findUnique({ where: { uuid: candidate } })
+          : await this.prisma.user.findUnique({ where: { uuid: candidate } });
+      if (!exists) {
+        return candidate;
+      }
+      attempts++;
+    }
+    throw new ConflictException('No fue posible generar un identificador único. Intenta nuevamente.');
+  }
+
+  private async generateUniqueTokenApp(): Promise<string> {
+    let attempts = 0;
+    while (attempts < 10) {
+      const candidate = this.generateShortUuid();
+      const exists = await this.prisma.familyGroup.findFirst({
+        where: { tokenApp: candidate }
+      });
+      if (!exists) {
+        return candidate;
+      }
+      attempts++;
+    }
+    throw new ConflictException('No fue posible generar un token único. Intenta nuevamente.');
+  }
+
+  private generateFallbackEmail(rut: string): string {
+    const sanitized = rut.replace(/[^0-9a-zA-Z]/g, '');
+    return `user_${sanitized}@example.com`;
+  }
+
   /**
    * Calcula la edad basada en la fecha de nacimiento
    */
@@ -69,11 +105,34 @@ export class MultiuserService {
 
   // ===== FAMILY GROUPS =====
   async createFamilyGroup(createFamilyGroupDto: CreateFamilyGroupDto, requestingUserUuid?: string) {
-    const { uuid = this.generateShortUuid(), leader, tokenApp, maxMembers = 8 } = createFamilyGroupDto;
+    const { leader, maxMembers = 8 } = createFamilyGroupDto;
+
+    const leaderUser = await this.prisma.user.findUnique({
+      where: { uuid: leader }
+    });
+
+    if (!leaderUser) {
+      throw new NotFoundException('El líder indicado no existe');
+    }
+
+    if (leaderUser.familyGroupsUuid) {
+      throw new ConflictException('El líder ya pertenece a un grupo familiar');
+    }
+
+    const existingLeaderGroup = await this.prisma.familyGroup.findFirst({
+      where: { leader }
+    });
+
+    if (existingLeaderGroup) {
+      throw new ConflictException('Este líder ya tiene un grupo familiar asociado');
+    }
+
+    const groupUuid = createFamilyGroupDto.uuid || (await this.generateUniqueShortUuid('familyGroup'));
+    const tokenApp = createFamilyGroupDto.tokenApp || (await this.generateUniqueTokenApp());
 
     // Verificar si el grupo familiar ya existe
     const existingGroup = await this.prisma.familyGroup.findUnique({
-      where: { uuid }
+      where: { uuid: groupUuid }
     });
 
     if (existingGroup) {
@@ -94,7 +153,7 @@ export class MultiuserService {
     // Crear el grupo familiar
     const familyGroup = await this.prisma.familyGroup.create({
       data: {
-        uuid,
+        uuid: groupUuid,
         leader,
         tokenApp,
         maxMembers
@@ -102,14 +161,14 @@ export class MultiuserService {
     });
 
     // Asociar el líder al grupo familiar
-    const leaderUser = await this.prisma.user.update({
+    const leaderUserUpdated = await this.prisma.user.update({
       where: { uuid: leader },
-      data: { familyGroupsUuid: familyGroup.uuid }
+      data: { familyGroupsUuid: familyGroup.uuid, isLeader: true }
     });
 
     return {
       familyGroup,
-      leader: leaderUser,
+      leader: leaderUserUpdated,
       message: 'Grupo familiar creado exitosamente'
     };
   }
@@ -183,9 +242,9 @@ export class MultiuserService {
     // 4. Crear grupo familiar
     const familyGroup = await this.prisma.familyGroup.create({
       data: {
-        uuid: this.generateShortUuid(),
+        uuid: await this.generateUniqueShortUuid('familyGroup'),
         leader: user.uuid,
-        tokenApp: dto?.tokenApp || this.generateShortUuid(),
+        tokenApp: dto?.tokenApp || (await this.generateUniqueTokenApp()),
         maxMembers: 8
       }
     });
@@ -217,6 +276,116 @@ export class MultiuserService {
       user: updatedUser,
       message: 'Grupo familiar creado exitosamente'
     };
+  }
+
+  async ensureFamilyGroupForUser(payload: {
+    rut: string;
+    email?: string;
+    firstName?: string;
+    lastNamePaterno?: string;
+    lastNameMaterno?: string;
+  }) {
+    const { rut, email, firstName, lastNamePaterno, lastNameMaterno } = payload;
+
+    if (!rut) {
+      throw new BadRequestException('El RUT es obligatorio');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      let user = await tx.user.findUnique({ where: { rut } });
+      let createdUser = false;
+      let createdGroup = false;
+
+      if (!user) {
+        const userUuid = await this.generateUniqueShortUuid('user');
+        const password = await bcrypt.hash(this.generateRandomPassword(), 10);
+        user = await tx.user.create({
+          data: {
+            uuid: userUuid,
+            rut,
+            email: email || this.generateFallbackEmail(rut),
+            username: `leader_${rut.split('-')[0]}`,
+            password,
+            firstName,
+            lastNamePaterno,
+            lastNameMaterno,
+            isActive: true,
+            isLeader: true
+          }
+        });
+        createdUser = true;
+      } else {
+        // Asegurar que tenga información básica actualizada
+        const updates: Record<string, unknown> = {};
+        if (email && user.email !== email) {
+          updates.email = email;
+        }
+        if (firstName && user.firstName !== firstName) {
+          updates.firstName = firstName;
+        }
+        if (lastNamePaterno && user.lastNamePaterno !== lastNamePaterno) {
+          updates.lastNamePaterno = lastNamePaterno;
+        }
+        if (lastNameMaterno && user.lastNameMaterno !== lastNameMaterno) {
+          updates.lastNameMaterno = lastNameMaterno;
+        }
+        if (!user.isLeader) {
+          updates.isLeader = true;
+        }
+
+        if (Object.keys(updates).length) {
+          user = await tx.user.update({
+            where: { uuid: user.uuid },
+            data: updates
+          });
+        }
+      }
+
+      let familyGroup =
+        user.familyGroupsUuid &&
+        (await tx.familyGroup.findUnique({ where: { uuid: user.familyGroupsUuid } }));
+
+      if (familyGroup && familyGroup.leader !== user.uuid) {
+        // El usuario era parte de otro grupo; lo removemos antes de crear el suyo.
+        await tx.user.update({
+          where: { uuid: user.uuid },
+          data: { familyGroupsUuid: null }
+        });
+        familyGroup = null;
+      }
+
+      if (!familyGroup) {
+        const groupUuid = await this.generateUniqueShortUuid('familyGroup');
+        const tokenApp = await this.generateUniqueTokenApp();
+        familyGroup = await tx.familyGroup.create({
+          data: {
+            uuid: groupUuid,
+            leader: user.uuid,
+            tokenApp,
+            maxMembers: 8
+          }
+        });
+        await tx.user.update({
+          where: { uuid: user.uuid },
+          data: { familyGroupsUuid: familyGroup.uuid, isLeader: true }
+        });
+        createdGroup = true;
+      }
+
+      return {
+        user: {
+          ...user,
+          familyGroupsUuid: familyGroup.uuid,
+          isLeader: true
+        },
+        familyGroup,
+        createdUser,
+        createdGroup,
+        message: createdGroup
+          ? 'Grupo familiar creado y asociado al usuario'
+          : 'El usuario ya contaba con un grupo familiar'
+      };
+    });
   }
 
   async findAllFamilyGroups() {
@@ -531,7 +700,11 @@ export class MultiuserService {
   }
 
   // ===== MEMBERS =====
-  async addMemberToFamilyGroup(familyGroupUuid: string, addMemberDto: any) {
+  async addMemberToFamilyGroup(
+    familyGroupUuid: string,
+    addMemberDto: any,
+    requestingLeaderUuid?: string
+  ) {
     const { rut, email, firstName, lastNamePaterno, lastNameMaterno } = addMemberDto;
 
     // Verificar que el grupo familiar existe
@@ -541,6 +714,10 @@ export class MultiuserService {
 
     if (!familyGroup) {
       throw new NotFoundException('Grupo familiar no encontrado');
+    }
+
+    if (requestingLeaderUuid && familyGroup.leader !== requestingLeaderUuid) {
+      throw new ForbiddenException('Solo el líder del grupo puede agregar miembros');
     }
 
     // Verificar que el grupo no esté lleno
@@ -598,6 +775,66 @@ export class MultiuserService {
       user: newUser,
       message: 'Miembro agregado al grupo familiar exitosamente'
     };
+  }
+
+  async removeMemberFromFamilyGroup(
+    familyGroupUuid: string,
+    memberUuid: string,
+    leaderUuid: string
+  ) {
+    const familyGroup = await this.prisma.familyGroup.findUnique({
+      where: { uuid: familyGroupUuid }
+    });
+
+    if (!familyGroup) {
+      throw new NotFoundException('Grupo familiar no encontrado');
+    }
+
+    if (familyGroup.leader !== leaderUuid) {
+      throw new ForbiddenException('Solo el líder del grupo puede eliminar miembros');
+    }
+
+    if (memberUuid === leaderUuid) {
+      throw new ConflictException('El líder no puede eliminarse a sí mismo. Debe eliminar el grupo.');
+    }
+
+    const member = await this.prisma.user.findUnique({
+      where: { uuid: memberUuid }
+    });
+
+    if (!member || member.familyGroupsUuid !== familyGroupUuid) {
+      throw new NotFoundException('El usuario indicado no pertenece a este grupo');
+    }
+
+    await this.prisma.user.update({
+      where: { uuid: memberUuid },
+      data: { familyGroupsUuid: null }
+    });
+
+    return { message: 'Miembro eliminado del grupo familiar' };
+  }
+
+  async leaveFamilyGroup(userUuid: string) {
+    const user = await this.prisma.user.findUnique({ where: { uuid: userUuid } });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    if (!user.familyGroupsUuid) {
+      throw new ConflictException('El usuario no está asociado a ningún grupo familiar');
+    }
+
+    if (user.isLeader) {
+      throw new ForbiddenException('El líder del grupo debe eliminar el grupo o transferir el liderazgo');
+    }
+
+    await this.prisma.user.update({
+      where: { uuid: userUuid },
+      data: { familyGroupsUuid: null }
+    });
+
+    return { message: 'Has abandonado el grupo familiar' };
   }
 
   async findLeaderByUuid(uuid: string) {

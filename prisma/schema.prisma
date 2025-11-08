@@ -11,13 +11,13 @@ datasource db {
 }
 
 model FamilyGroup {
-  id        String   @id @default(cuid())
-  uuid      String   @unique @db.VarChar(8)  // UUID corto de 8 caracteres
-  leader    String   @db.VarChar(8)          // UUID corto del usuario líder
-  tokenApp  String   @map("token_app")
-  maxMembers Int     @default(8)             // Máximo de miembros permitidos
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  uuid       String   @unique @db.VarChar(8)  // UUID corto de 8 caracteres
+  leader     String   @unique @db.VarChar(8)  // UUID corto del usuario líder
+  tokenApp   String   @unique @map("token_app")
+  maxMembers Int      @default(8)             // Máximo de miembros permitidos
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // Relaciones
   users User[]

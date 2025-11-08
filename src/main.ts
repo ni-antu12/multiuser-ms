@@ -31,7 +31,6 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
 
   console.log(`🚀 NestJS corriendo en: http://localhost:${port}/api`);
-  console.log(`📱 Acceso móvil: http://172.29.48.1:${port}/api`);
   console.log(`📚 Swagger UI disponible en: http://localhost:${port}/api/docs`);
 }
 bootstrap();

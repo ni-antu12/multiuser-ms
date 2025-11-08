@@ -7,6 +7,7 @@ import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import { AddMemberDto } from './dto/add-member.dto';
+import { EnsureFamilyGroupDto } from './dto/ensure-family-group.dto';
 
 @ApiTags('multiuser')
 @Controller('multiuser')
@@ -250,6 +251,19 @@ export class MultiuserController {
     
     // MÉTODO SIMPLE: Crear datos básicos directamente
     return this.multiuserService.createMyFamilyGroupSimple(userRut, createMyFamilyGroupDto);
+  }
+
+  @ApiOperation({
+    summary: 'Asegurar grupo familiar para usuario autenticado',
+    description: 'Garantiza que el usuario tenga un grupo familiar propio. Si no existe, lo crea y lo asigna como líder.'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Información del grupo y usuario retornada'
+  })
+  @Post('session/ensure-group')
+  ensureFamilyGroup(@Body() ensureFamilyGroupDto: EnsureFamilyGroupDto) {
+    return this.multiuserService.ensureFamilyGroupForUser(ensureFamilyGroupDto);
   }
 
   @ApiOperation({ 
@@ -653,9 +667,35 @@ export class MultiuserController {
   @Post('family-groups/:uuid/members')
   addMemberToFamilyGroup(
     @Param('uuid') uuid: string,
-    @Body() addMemberDto: AddMemberDto
+    @Body() addMemberDto: AddMemberDto,
+    @Headers('x-user-uuid') leaderUuid?: string
   ) {
-    return this.multiuserService.addMemberToFamilyGroup(uuid, addMemberDto);
+    return this.multiuserService.addMemberToFamilyGroup(uuid, addMemberDto, leaderUuid);
+  }
+
+  @ApiOperation({
+    summary: 'Eliminar miembro de un grupo familiar',
+    description: 'El líder del grupo puede eliminar a un miembro específico.'
+  })
+  @Delete('family-groups/:uuid/members/:memberUuid')
+  removeMemberFromFamilyGroup(
+    @Param('uuid') uuid: string,
+    @Param('memberUuid') memberUuid: string,
+    @Headers('x-user-uuid') leaderUuid: string
+  ) {
+    return this.multiuserService.removeMemberFromFamilyGroup(uuid, memberUuid, leaderUuid);
+  }
+
+  @ApiOperation({
+    summary: 'Abandonar grupo familiar',
+    description: 'Permite que un miembro abandone el grupo al que pertenece.'
+  })
+  @Post('family-groups/members/leave')
+  leaveFamilyGroup(@Headers('x-user-uuid') userUuid: string) {
+    if (!userUuid) {
+      throw new HttpException('El header X-User-UUID es requerido', HttpStatus.BAD_REQUEST);
+    }
+    return this.multiuserService.leaveFamilyGroup(userUuid);
   }
 
   // ===== HEALTH CHECK =====
