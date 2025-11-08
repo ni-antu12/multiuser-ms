@@ -19,7 +19,8 @@ async function bootstrap() {
     .addTag('multiuser', '🎯 Gestión completa de usuarios y grupos familiares')
     .addTag('utils', '🛠️ Utilidades como generación de UUIDs')
     .addServer('http://localhost:3000', 'Servidor de desarrollo')
-    .addServer('https://api.tudominio.com', 'Servidor de producción')
+    .addServer('https://multiuser-ms-759723220385.southamerica-west1.run.app', 'Cloud Run (producción)')
+
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
