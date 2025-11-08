@@ -1,0 +1,46 @@
+options:
+  substitution_option: ALLOW_LOOSE
+
+substitutions:
+  _SERVICE_NAME: multiuser-ms
+  _REGION: southamerica-west1
+  _AR_HOST: southamerica-west1-docker.pkg.dev
+  _AR_REPOSITORY: multiuser-ms
+  # _SECRET_DATABASE_URL: projects/$PROJECT_ID/secrets/DATABASE_URL:latest
+
+steps:
+  # Construye la imagen usando el Dockerfile del repositorio
+  - name: gcr.io/cloud-builders/docker
+    id: build-image
+    args:
+      - build
+      - --tag
+      - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
+      - .
+
+  # Publica la imagen en Artifact Registry
+  - name: gcr.io/cloud-builders/docker
+    id: push-image
+    args:
+      - push
+      - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
+
+  # Despliega la imagen en Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy-cloud-run
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      # Sustituye la línea siguiente por tu secreto en Secret Manager (o elimínala si usas variables en Cloud Run)
+      # - --set-secrets=DATABASE_URL=${_SECRET_DATABASE_URL}
+
+images:
+  - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
+

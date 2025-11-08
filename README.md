@@ -288,6 +288,35 @@ docker build -t multiuser-ms .
 docker-compose up -d
 ```
 
+## ☁️ Despliegue en Cloud Run con Cloud Build
+
+1. **Crear repositorio en Artifact Registry**
+   - `gcloud artifacts repositories create <repo-name> --repository-format=docker --location=southamerica-west1`
+   - Actualiza `_AR_HOST` y `_AR_REPOSITORY` en `cloudbuild.yaml` si usas otra ubicación o nombre.
+2. **Configurar secretos (opcional pero recomendado)**
+   - `gcloud secrets create DATABASE_URL --replication-policy=automatic`
+   - `echo -n "<cadena-de-conexion>" | gcloud secrets versions add DATABASE_URL --data-file=-`
+   - Quita el comentario de `_SECRET_DATABASE_URL` y `--set-secrets` en `cloudbuild.yaml`.
+3. **Crear el servicio de Cloud Run (solo la primera vez)**
+   - `gcloud run deploy multiuser-ms --image=gcr.io/cloudrun/placeholder --region=southamerica-west1 --platform=managed --allow-unauthenticated --port=8080`
+   - Después, Cloud Build lo actualizará automáticamente.
+4. **Conectar el repositorio de GitHub en Cloud Build**
+   - En Google Cloud Console → Cloud Build → *Repositorios conectados* → *Conectar repositorio*.
+   - Selecciona GitHub y autoriza el acceso al repositorio donde vive este código.
+5. **Crear un disparador (trigger) de Cloud Build**
+   - Tipo: *Repositorio conectado*.
+   - Rama: por ejemplo `main` (despliegue automático al hacer push).
+   - Archivo de configuración: `cloudbuild.yaml`.
+   - Variables de sustitución opcionales:
+     - `_SERVICE_NAME` (nombre del servicio en Cloud Run).
+     - `_REGION` (región de despliegue, e.g. `southamerica-west1`).
+     - `_AR_HOST` y `_AR_REPOSITORY` si cambiaste la ubicación del repositorio de imágenes.
+6. **Probar el pipeline**
+   - Haz un commit y push a la rama monitoreada.
+   - Revisa Cloud Build → *Historial de compilaciones* para verificar el despliegue.
+
+> El archivo `cloudbuild.yaml` en la raíz ya contiene los pasos para construir la imagen, subirla a Artifact Registry y desplegarla en Cloud Run.
+
 ## 🔧 Tecnologías Utilizadas
 
 ### Backend
