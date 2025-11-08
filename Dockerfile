@@ -1,23 +1,27 @@
-#Imagen para Node
+# Imagen base de Node
 FROM node:20
 
-#Directorio de trabajo
+# Directorio de trabajo
 WORKDIR /usr/src/app
 
-#Copia los archivos package.json y package-lock.json
+# Copia de archivos de dependencias
 COPY package*.json ./
 
-#Instala las dependencias
+# Instalación de dependencias (incluye dev para compilar)
 RUN npm install
 
-#Copia el resto del codigo
+# Copiamos el código fuente
 COPY . .
 
-#Generar cliente de Prisma
+# Genera Prisma Client y compila NestJS
 RUN npx prisma generate
+RUN npm run build
 
-#Exponer el puerto 3000
-EXPOSE $PORT
+# Variables de entorno recomendadas
+ENV NODE_ENV=production
 
-#Comando para ejecutar el servidor
-CMD ["npm", "run", "start:dev"]
+# Exponemos el puerto que Cloud Run utilizará
+EXPOSE 8080
+
+# Ejecutamos la versión compilada
+CMD ["npm", "run", "start:prod"]
