@@ -4,9 +4,6 @@ FROM node:20
 #Directorio de trabajo
 WORKDIR /usr/src/app
 
-#Instala NestJS CLI globalmente
-RUN npm install -g @nestjs/cli
-
 #Copia los archivos package.json y package-lock.json
 COPY package*.json ./
 
