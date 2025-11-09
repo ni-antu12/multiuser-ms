@@ -46,3 +46,18 @@ model User {
 
   @@map("users")
 }
+
+model Patient {
+  id              String   @id @default(uuid()) @db.Uuid
+  rut             String   @unique
+  nombre          String
+  apellidoPaterno String   @map("apellido_paterno")
+  apellidoMaterno String?  @map("apellido_materno")
+  correo          String   @unique
+  telefono        String?
+  password        String
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("patients")
+}

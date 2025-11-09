@@ -6,7 +6,6 @@ import { UpdateFamilyGroupDto } from './dto/update-family-group.dto';
 import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
-import { PatientsService } from './patients.service';
 import { PatientLoginDto } from './dto/patient-login.dto';
 import * as bcrypt from 'bcryptjs';
 
@@ -14,8 +13,7 @@ import * as bcrypt from 'bcryptjs';
 export class MultiuserService {
   constructor(
     private prisma: PrismaService,
-    private formsMicroserviceService: FormsMicroserviceService,
-    private patientsService: PatientsService
+    private formsMicroserviceService: FormsMicroserviceService
   ) {}
 
   /**
@@ -73,6 +71,38 @@ export class MultiuserService {
     const sanitized = rut.replace(/[^0-9a-zA-Z]/g, '');
     return `user_${sanitized}@example.com`;
   }
+
+  private async findPatientByRut(rut: string) {
+    const result = await this.prisma.$queryRaw<{
+      rut: string;
+      nombre: string;
+      apellido_paterno: string;
+      apellido_materno: string | null;
+      correo: string;
+      telefono: string | null;
+      password: string;
+    }>`
+      SELECT rut, nombre, apellido_paterno, apellido_materno, correo, telefono, password
+      FROM "patients"
+      WHERE rut = ${rut}
+      LIMIT 1
+    `;
+
+    if (!result) {
+      return null;
+    }
+
+    return {
+      rut: result.rut,
+      nombre: result.nombre,
+      apellidoPaterno: result.apellido_paterno,
+      apellidoMaterno: result.apellido_materno,
+      correo: result.correo,
+      telefono: result.telefono,
+      password: result.password,
+    };
+  }
+
 
   /**
    * Calcula la edad basada en la fecha de nacimiento
@@ -182,7 +212,7 @@ export class MultiuserService {
   async createMyFamilyGroupSimple(userRut: string, dto?: CreateMyFamilyGroupDto) {
     console.log('🚀 MÉTODO SIMPLE: Creando/asegurando grupo familiar para RUT:', userRut);
 
-    const patientRecord = await this.patientsService.findByRut(userRut);
+    const patientRecord = await this.findPatientByRut(userRut);
 
     if (!patientRecord) {
       throw new NotFoundException('Paciente no encontrado en la base de pacientes');
@@ -302,7 +332,7 @@ export class MultiuserService {
       throw new BadRequestException('El RUT es obligatorio');
     }
 
-    const patientRecord = await this.patientsService.findByRut(rut);
+    const patientRecord = await this.findPatientByRut(rut);
 
     if (!patientRecord && !payload.email && !payload.firstName) {
       throw new NotFoundException('Paciente no encontrado en la base de pacientes');
@@ -416,9 +446,9 @@ export class MultiuserService {
   async loginPatient(dto: PatientLoginDto) {
     const { rut, password } = dto;
 
-    const patient = await this.patientsService.validateCredentials(rut, password);
+    const patient = await this.findPatientByRut(rut);
 
-    if (!patient) {
+    if (!patient || patient.password !== password) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 

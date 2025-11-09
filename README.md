@@ -121,6 +121,23 @@ multiuser-ms/
 
 ### 🏥 **Centro Médico (Recomendado)**
 
+#### **Login de paciente simulado**
+```http
+POST /multiuser/session/login
+Body:
+{
+  "rut": "20392017-2",
+  "password": "demo123"
+}
+```
+
+- Valida las credenciales contra la tabla `pacientes` (simulada en Docker).
+- Si son correctas, garantiza que exista un grupo familiar liderado por el paciente y retorna:
+  - Datos del paciente (rut, nombre, correo, teléfono).
+  - Información del grupo familiar (`familyGroup`).
+  - Bandera `createdGroup` indicando si se tuvo que crear.
+- Los registros de ejemplo se insertan automáticamente con la migración `20251108221500_add_patients_table` (`npx prisma migrate deploy`).
+
 #### **Crear Mi Grupo Familiar**
 ```http
 POST /multiuser/my-family-group
@@ -281,14 +298,8 @@ npm start
 ## Docker
 
 ```bash
-# Construir imagen
+# Construir imagen local (opcional)
 docker build -t multiuser-ms .
-
-# Levantar solo la base de datos de pacientes (simulación centro médico)
-docker compose up patients-db -d
-
-# Ejecutar backend + base de pacientes
-docker compose up -d
 ```
 
 ## ☁️ Despliegue en Cloud Run con Cloud Build
@@ -580,8 +591,6 @@ FORMS_MICROSERVICE_URL="http://localhost:3001"
 # Puerto del servidor
 PORT=3000
 
-# Base de datos de pacientes (simulación Centro Médico)
-PATIENTS_DATABASE_URL="postgresql://patients_user:patients_pass@localhost:5434/pacientes_db"
 ```
 
 ### **Configuración del Microservicio de Formularios**
