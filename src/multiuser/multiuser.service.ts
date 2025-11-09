@@ -73,7 +73,7 @@ export class MultiuserService {
   }
 
   private async findPatientByRut(rut: string) {
-    const result = await this.prisma.$queryRaw<{
+    const result = await this.prisma.$queryRaw<Array<{
       rut: string;
       nombre: string;
       apellido_paterno: string;
@@ -81,25 +81,27 @@ export class MultiuserService {
       correo: string;
       telefono: string | null;
       password: string;
-    }>`
+    }>>`
       SELECT rut, nombre, apellido_paterno, apellido_materno, correo, telefono, password
       FROM "patients"
       WHERE rut = ${rut}
       LIMIT 1
     `;
 
-    if (!result) {
+    const patient = result[0];
+
+    if (!patient) {
       return null;
     }
 
     return {
-      rut: result.rut,
-      nombre: result.nombre,
-      apellidoPaterno: result.apellido_paterno,
-      apellidoMaterno: result.apellido_materno,
-      correo: result.correo,
-      telefono: result.telefono,
-      password: result.password,
+      rut: patient.rut,
+      nombre: patient.nombre,
+      apellidoPaterno: patient.apellido_paterno,
+      apellidoMaterno: patient.apellido_materno,
+      correo: patient.correo,
+      telefono: patient.telefono,
+      password: patient.password,
     };
   }
 
