@@ -8,6 +8,7 @@ import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import { AddMemberDto } from './dto/add-member.dto';
 import { EnsureFamilyGroupDto } from './dto/ensure-family-group.dto';
+import { PatientLoginDto } from './dto/patient-login.dto';
 
 @ApiTags('multiuser')
 @Controller('multiuser')
@@ -264,6 +265,15 @@ export class MultiuserController {
   @Post('session/ensure-group')
   ensureFamilyGroup(@Body() ensureFamilyGroupDto: EnsureFamilyGroupDto) {
     return this.multiuserService.ensureFamilyGroupForUser(ensureFamilyGroupDto);
+  }
+
+  @ApiOperation({
+    summary: 'Login básico (simulación centro médico)',
+    description: 'Autentica al paciente contra la base local de pacientes usando rut y contraseña y garantiza su grupo familiar.'
+  })
+  @Post('session/login')
+  loginPatient(@Body() patientLoginDto: PatientLoginDto) {
+    return this.multiuserService.loginPatient(patientLoginDto);
   }
 
   @ApiOperation({ 

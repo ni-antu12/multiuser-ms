@@ -9,6 +9,7 @@ export interface PatientRecord {
   apellidoMaterno: string | null;
   correo: string;
   telefono: string | null;
+  password: string;
 }
 
 @Injectable()
@@ -53,7 +54,8 @@ export class PatientsService implements OnModuleDestroy {
             apellido_paterno AS "apellidoPaterno",
             apellido_materno AS "apellidoMaterno",
             correo,
-            telefono
+            telefono,
+            password
           FROM pacientes
           WHERE rut = $1
           LIMIT 1
@@ -70,6 +72,19 @@ export class PatientsService implements OnModuleDestroy {
       this.logger.error(`Error consultando paciente ${rut}`, error as Error);
       return null;
     }
+  }
+
+  async validateCredentials(rut: string, password: string): Promise<PatientRecord | null> {
+    const patient = await this.findByRut(rut);
+    if (!patient) {
+      return null;
+    }
+
+    if (patient.password !== password) {
+      return null;
+    }
+
+    return patient;
   }
 }
 

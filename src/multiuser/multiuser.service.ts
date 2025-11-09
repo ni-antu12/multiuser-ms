@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, HttpException, HttpStatus, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, HttpException, HttpStatus, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FormsMicroserviceService } from './forms-microservice.service';
 import { CreateFamilyGroupDto } from './dto/create-family-group.dto';
@@ -7,6 +7,7 @@ import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import { PatientsService } from './patients.service';
+import { PatientLoginDto } from './dto/patient-login.dto';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
@@ -410,6 +411,36 @@ export class MultiuserService {
           : 'El usuario ya contaba con un grupo familiar'
       };
     });
+  }
+
+  async loginPatient(dto: PatientLoginDto) {
+    const { rut, password } = dto;
+
+    const patient = await this.patientsService.validateCredentials(rut, password);
+
+    if (!patient) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    const ensureResult = await this.ensureFamilyGroupForUser({
+      rut,
+      email: patient.correo,
+      firstName: patient.nombre,
+      lastNamePaterno: patient.apellidoPaterno ?? undefined,
+      lastNameMaterno: patient.apellidoMaterno ?? undefined
+    });
+
+    return {
+      patient: {
+        rut: patient.rut,
+        nombre: patient.nombre,
+        apellidoPaterno: patient.apellidoPaterno,
+        apellidoMaterno: patient.apellidoMaterno,
+        correo: patient.correo,
+        telefono: patient.telefono
+      },
+      ...ensureResult
+    };
   }
 
   async findAllFamilyGroups() {
