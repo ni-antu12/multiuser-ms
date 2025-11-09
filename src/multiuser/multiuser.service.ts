@@ -105,6 +105,29 @@ export class MultiuserService {
     };
   }
 
+  private async upsertPatientRecord(data: {
+    rut: string;
+    nombre: string;
+    apellidoPaterno: string;
+    apellidoMaterno?: string | null;
+    correo: string;
+    telefono?: string | null;
+    password?: string | null;
+  }) {
+    await this.prisma.$executeRaw`
+      INSERT INTO "patients" (rut, nombre, apellido_paterno, apellido_materno, correo, telefono, password)
+      VALUES (${data.rut}, ${data.nombre}, ${data.apellidoPaterno}, ${data.apellidoMaterno ?? null}, ${data.correo}, ${data.telefono ?? null}, ${data.password ?? 'demo123'})
+      ON CONFLICT (rut)
+      DO UPDATE SET
+        nombre = EXCLUDED.nombre,
+        apellido_paterno = EXCLUDED.apellido_paterno,
+        apellido_materno = EXCLUDED.apellido_materno,
+        correo = EXCLUDED.correo,
+        telefono = EXCLUDED.telefono,
+        updated_at = CURRENT_TIMESTAMP
+    `;
+  }
+
 
   /**
    * Calcula la edad basada en la fecha de nacimiento
@@ -792,7 +815,7 @@ export class MultiuserService {
     addMemberDto: any,
     requestingLeaderUuid?: string
   ) {
-    const { rut, email, firstName, lastNamePaterno, lastNameMaterno } = addMemberDto;
+    const { rut, email, firstName, lastNamePaterno, lastNameMaterno, telefono } = addMemberDto;
 
     // Verificar que el grupo familiar existe
     const familyGroup = await this.prisma.familyGroup.findUnique({
@@ -816,6 +839,62 @@ export class MultiuserService {
       throw new ConflictException('El grupo familiar ha alcanzado el máximo de miembros');
     }
 
+    let patientRecord = await this.findPatientByRut(rut);
+
+    if (!patientRecord) {
+      if (!firstName || !lastNamePaterno || !email) {
+        throw new BadRequestException('Paciente no encontrado. Proporciona nombre, apellido paterno y email.');
+      }
+
+      await this.upsertPatientRecord({
+        rut,
+        nombre: firstName,
+        apellidoPaterno: lastNamePaterno,
+        apellidoMaterno: lastNameMaterno ?? null,
+        correo: email,
+        telefono: telefono ?? null,
+        password: 'demo123'
+      });
+
+      patientRecord = await this.findPatientByRut(rut);
+    } else {
+      const updatedNombre = firstName ?? patientRecord.nombre;
+      const updatedApellidoP = lastNamePaterno ?? patientRecord.apellidoPaterno;
+      const updatedApellidoM =
+        lastNameMaterno !== undefined ? lastNameMaterno : patientRecord.apellidoMaterno;
+      const updatedCorreo = email ?? patientRecord.correo;
+      const updatedTelefono = telefono ?? patientRecord.telefono ?? null;
+
+      if (
+        updatedNombre !== patientRecord.nombre ||
+        updatedApellidoP !== patientRecord.apellidoPaterno ||
+        updatedApellidoM !== patientRecord.apellidoMaterno ||
+        updatedCorreo !== patientRecord.correo ||
+        updatedTelefono !== patientRecord.telefono
+      ) {
+        await this.upsertPatientRecord({
+          rut,
+          nombre: updatedNombre,
+          apellidoPaterno: updatedApellidoP,
+          apellidoMaterno: updatedApellidoM,
+          correo: updatedCorreo,
+          telefono: updatedTelefono,
+          password: patientRecord.password
+        });
+
+        patientRecord = await this.findPatientByRut(rut);
+      }
+    }
+
+    const memberEmail = patientRecord?.correo || email;
+    if (!memberEmail) {
+      throw new BadRequestException('No hay email registrado para el paciente.');
+    }
+
+    const memberFirstName = patientRecord?.nombre || firstName || 'Miembro';
+    const memberLastNamePaterno = patientRecord?.apellidoPaterno || lastNamePaterno || 'Familia';
+    const memberLastNameMaterno = patientRecord?.apellidoMaterno || lastNameMaterno || '';
+
     // Verificar si el usuario ya existe
     const existingUser = await this.prisma.user.findUnique({
       where: { rut }
@@ -825,10 +904,27 @@ export class MultiuserService {
       if (existingUser.familyGroupsUuid) {
         throw new ConflictException('El usuario ya pertenece a otro grupo familiar');
       }
-      // Si existe pero no está en un grupo, agregarlo al grupo
+
+      const updates: Record<string, unknown> = {
+        familyGroupsUuid: familyGroupUuid
+      };
+
+      if (existingUser.email !== memberEmail) {
+        updates.email = memberEmail;
+      }
+      if (existingUser.firstName !== memberFirstName) {
+        updates.firstName = memberFirstName;
+      }
+      if (existingUser.lastNamePaterno !== memberLastNamePaterno) {
+        updates.lastNamePaterno = memberLastNamePaterno;
+      }
+      if (existingUser.lastNameMaterno !== memberLastNameMaterno) {
+        updates.lastNameMaterno = memberLastNameMaterno;
+      }
+
       const updatedUser = await this.prisma.user.update({
         where: { uuid: existingUser.uuid },
-        data: { familyGroupsUuid: familyGroupUuid }
+        data: updates
       });
 
       return {
@@ -841,17 +937,17 @@ export class MultiuserService {
     const generatedUsername = `member_${rut.split('-')[0]}`;
     const generatedPassword = this.generateRandomPassword();
     const hashedPassword = await bcrypt.hash(generatedPassword, 10);
-    
+
     const newUser = await this.prisma.user.create({
       data: {
         uuid: this.generateShortUuid(),
         rut,
-        email,
+        email: memberEmail,
         username: generatedUsername,
         password: hashedPassword,
-        firstName: firstName || 'Miembro',
-        lastNamePaterno: lastNamePaterno || 'Familia',
-        lastNameMaterno: lastNameMaterno || '',
+        firstName: memberFirstName,
+        lastNamePaterno: memberLastNamePaterno,
+        lastNameMaterno: memberLastNameMaterno,
         isActive: true,
         isLeader: false,
         familyGroupsUuid: familyGroupUuid
@@ -1032,5 +1128,15 @@ export class MultiuserService {
     });
 
     return { message: 'Líder eliminado exitosamente' };
+  }
+
+  async getPatientProfile(rut: string) {
+    const patient = await this.findPatientByRut(rut);
+
+    if (!patient) {
+      throw new NotFoundException('Paciente no encontrado');
+    }
+
+    return patient;
   }
 }

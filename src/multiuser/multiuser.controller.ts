@@ -1066,4 +1066,18 @@ export class MultiuserController {
   deleteLeader(@Param('uuid') uuid: string) {
     return this.multiuserService.deleteLeader(uuid);
   }
+
+  @ApiOperation({
+    summary: 'Consulta de paciente por RUT',
+    description: 'Devuelve los datos del paciente registrados en la base interna. Devuelve 404 si no existe.'
+  })
+  @ApiParam({
+    name: 'rut',
+    description: 'RUT del paciente',
+    example: '20392017-2'
+  })
+  @Get('patients/:rut')
+  getPatientProfile(@Param('rut') rut: string) {
+    return this.multiuserService.getPatientProfile(rut);
+  }
 }

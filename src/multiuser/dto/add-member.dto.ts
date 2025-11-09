@@ -40,4 +40,12 @@ export class AddMemberDto {
   @IsString()
   @IsOptional()
   lastNameMaterno?: string;
+
+  @ApiPropertyOptional({
+    description: 'Teléfono de contacto',
+    example: '+56912345678'
+  })
+  @IsString()
+  @IsOptional()
+  telefono?: string;
 }
