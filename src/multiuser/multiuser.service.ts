@@ -6,13 +6,15 @@ import { UpdateFamilyGroupDto } from './dto/update-family-group.dto';
 import { CreateLeaderDto } from './dto/create-leader.dto';
 import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
+import { PatientsService } from './patients.service';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
 export class MultiuserService {
   constructor(
     private prisma: PrismaService,
-    private formsMicroserviceService: FormsMicroserviceService
+    private formsMicroserviceService: FormsMicroserviceService,
+    private patientsService: PatientsService
   ) {}
 
   /**
@@ -177,32 +179,29 @@ export class MultiuserService {
    * MÉTODO SIMPLE: Crear grupo familiar sin microservicio de formularios
    */
   async createMyFamilyGroupSimple(userRut: string, dto?: CreateMyFamilyGroupDto) {
-    console.log('🚀 MÉTODO SIMPLE: Creando grupo familiar para RUT:', userRut);
-    
-    // 1. Crear datos básicos del paciente
+    console.log('🚀 MÉTODO SIMPLE: Creando/asegurando grupo familiar para RUT:', userRut);
+
+    const patientRecord = await this.patientsService.findByRut(userRut);
+
+    if (!patientRecord) {
+      throw new NotFoundException('Paciente no encontrado en la base de pacientes');
+    }
+
     const patientData = {
-      rut: userRut,
-      email: `paciente_${userRut.split('-')[0]}@centromedico.cl`,
-      firstName: 'Paciente',
-      lastNamePaterno: 'Desarrollo',
-      lastNameMaterno: 'Test',
-      username: `patient_${userRut.split('-')[0]}`,
-      birthDate: '1990-01-01', // Fecha por defecto (mayor de 18)
-      isActive: true
+      email: patientRecord.correo || this.generateFallbackEmail(userRut),
+      firstName: patientRecord.nombre || 'Paciente',
+      lastNamePaterno: patientRecord.apellidoPaterno || undefined,
+      lastNameMaterno: patientRecord.apellidoMaterno || undefined
     };
-    
-    console.log('🔧 Datos básicos creados:', patientData);
 
     // 2. Verificar si ya existe el usuario
     let user = await this.prisma.user.findUnique({ where: { rut: userRut } });
 
     if (user) {
-      // Validar que no esté en otro grupo
       if (user.familyGroupsUuid) {
         throw new ConflictException('Ya pertenece a un grupo familiar');
       }
 
-      // Validar que no tenga ya un grupo como líder
       const existingGroup = await this.prisma.familyGroup.findFirst({
         where: { leader: user.uuid }
       });
@@ -211,35 +210,47 @@ export class MultiuserService {
         throw new ConflictException('Ya tiene un grupo familiar creado');
       }
 
-      // Actualizar el flag de líder si no lo tiene
+      const updates: Record<string, unknown> = {};
+      if (user.email !== patientData.email) updates.email = patientData.email;
+      if (patientData.firstName && user.firstName !== patientData.firstName) {
+        updates.firstName = patientData.firstName;
+      }
+      if (patientData.lastNamePaterno && user.lastNamePaterno !== patientData.lastNamePaterno) {
+        updates.lastNamePaterno = patientData.lastNamePaterno;
+      }
+      if (patientData.lastNameMaterno && user.lastNameMaterno !== patientData.lastNameMaterno) {
+        updates.lastNameMaterno = patientData.lastNameMaterno;
+      }
       if (!user.isLeader) {
+        updates.isLeader = true;
+      }
+
+      if (Object.keys(updates).length) {
         user = await this.prisma.user.update({
           where: { uuid: user.uuid },
-          data: { isLeader: true }
+          data: updates
         });
       }
     } else {
-      // 3. Crear usuario líder (primera vez en el sistema)
       const hashedPassword = await bcrypt.hash(this.generateRandomPassword(), 10);
 
       user = await this.prisma.user.create({
         data: {
-          uuid: this.generateShortUuid(),
+          uuid: await this.generateUniqueShortUuid('user'),
           rut: userRut,
           email: patientData.email,
-          username: patientData.username,
+          username: `patient_${userRut.split('-')[0]}`,
           password: hashedPassword,
           firstName: patientData.firstName,
           lastNamePaterno: patientData.lastNamePaterno,
           lastNameMaterno: patientData.lastNameMaterno,
-          isActive: patientData.isActive,
+          isActive: true,
           isLeader: true,
           familyGroupsUuid: null
         }
       });
     }
 
-    // 4. Crear grupo familiar
     const familyGroup = await this.prisma.familyGroup.create({
       data: {
         uuid: await this.generateUniqueShortUuid('familyGroup'),
@@ -249,7 +260,6 @@ export class MultiuserService {
       }
     });
 
-    // 5. Asociar líder al grupo
     const updatedUser = await this.prisma.user.update({
       where: { uuid: user.uuid },
       data: { familyGroupsUuid: familyGroup.uuid },
@@ -269,7 +279,7 @@ export class MultiuserService {
       }
     });
 
-    console.log('✅ Grupo familiar creado exitosamente:', familyGroup.uuid);
+    console.log('✅ Grupo familiar creado o confirmado:', familyGroup.uuid);
 
     return {
       familyGroup,
@@ -285,11 +295,25 @@ export class MultiuserService {
     lastNamePaterno?: string;
     lastNameMaterno?: string;
   }) {
-    const { rut, email, firstName, lastNamePaterno, lastNameMaterno } = payload;
+    const { rut } = payload;
 
     if (!rut) {
       throw new BadRequestException('El RUT es obligatorio');
     }
+
+    const patientRecord = await this.patientsService.findByRut(rut);
+
+    if (!patientRecord && !payload.email && !payload.firstName) {
+      throw new NotFoundException('Paciente no encontrado en la base de pacientes');
+    }
+
+    const resolvedEmail =
+      payload.email || patientRecord?.correo || this.generateFallbackEmail(rut);
+    const resolvedFirstName = payload.firstName || patientRecord?.nombre || 'Paciente';
+    const resolvedLastNamePaterno =
+      payload.lastNamePaterno || patientRecord?.apellidoPaterno || undefined;
+    const resolvedLastNameMaterno =
+      payload.lastNameMaterno || patientRecord?.apellidoMaterno || undefined;
 
     return this.prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { rut } });
@@ -303,12 +327,12 @@ export class MultiuserService {
           data: {
             uuid: userUuid,
             rut,
-            email: email || this.generateFallbackEmail(rut),
+            email: resolvedEmail,
             username: `leader_${rut.split('-')[0]}`,
             password,
-            firstName,
-            lastNamePaterno,
-            lastNameMaterno,
+            firstName: resolvedFirstName,
+            lastNamePaterno: resolvedLastNamePaterno,
+            lastNameMaterno: resolvedLastNameMaterno,
             isActive: true,
             isLeader: true
           }
@@ -317,17 +341,17 @@ export class MultiuserService {
       } else {
         // Asegurar que tenga información básica actualizada
         const updates: Record<string, unknown> = {};
-        if (email && user.email !== email) {
-          updates.email = email;
+        if (user.email !== resolvedEmail) {
+          updates.email = resolvedEmail;
         }
-        if (firstName && user.firstName !== firstName) {
-          updates.firstName = firstName;
+        if (user.firstName !== resolvedFirstName) {
+          updates.firstName = resolvedFirstName;
         }
-        if (lastNamePaterno && user.lastNamePaterno !== lastNamePaterno) {
-          updates.lastNamePaterno = lastNamePaterno;
+        if (resolvedLastNamePaterno && user.lastNamePaterno !== resolvedLastNamePaterno) {
+          updates.lastNamePaterno = resolvedLastNamePaterno;
         }
-        if (lastNameMaterno && user.lastNameMaterno !== lastNameMaterno) {
-          updates.lastNameMaterno = lastNameMaterno;
+        if (resolvedLastNameMaterno && user.lastNameMaterno !== resolvedLastNameMaterno) {
+          updates.lastNameMaterno = resolvedLastNameMaterno;
         }
         if (!user.isLeader) {
           updates.isLeader = true;

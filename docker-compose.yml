@@ -1,22 +1,24 @@
 version: '3.9'
 
 services:
-  multiuser-ms:
-    build: .
-    container_name: backend-multiuser-ms
-    ports:
-      - "${PORT:-3000}:${PORT:-3000}"
-    volumes:
-      - .:/usr/src/app
-      - /usr/src/app/node_modules
-    env_file:
-      - .env
+  patients-db:
+    image: postgres:15-alpine
+    container_name: patients-db
+    restart: unless-stopped
     environment:
-      PORT: ${PORT:-3000}
-      # Configuración para Cloud Run
-      FORMS_MICROSERVICE_URL: ${FORMS_MICROSERVICE_URL:-http://localhost:3001}
-      CLOUD_RUN_TIMEOUT: ${CLOUD_RUN_TIMEOUT:-10000}
-      CLOUD_RUN_API_KEY: ${CLOUD_RUN_API_KEY:-}
-      CLOUD_RUN_REGION: ${CLOUD_RUN_REGION:-us-central1}
-      CLOUD_RUN_PROJECT_ID: ${CLOUD_RUN_PROJECT_ID:-}
-    command: sh -c "npx prisma generate && npm run start:dev"
+      POSTGRES_DB: pacientes_db
+      POSTGRES_USER: patients_user
+      POSTGRES_PASSWORD: patients_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - patients_data:/var/lib/postgresql/data
+      - ./docker/patients/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patients_user -d pacientes_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  patients_data:

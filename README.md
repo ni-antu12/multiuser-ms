@@ -284,8 +284,11 @@ npm start
 # Construir imagen
 docker build -t multiuser-ms .
 
-# Ejecutar con docker-compose
-docker-compose up -d
+# Levantar solo la base de datos de pacientes (simulación centro médico)
+docker compose up patients-db -d
+
+# Ejecutar backend + base de pacientes
+docker compose up -d
 ```
 
 ## ☁️ Despliegue en Cloud Run con Cloud Build
@@ -576,6 +579,9 @@ FORMS_MICROSERVICE_URL="http://localhost:3001"
 
 # Puerto del servidor
 PORT=3000
+
+# Base de datos de pacientes (simulación Centro Médico)
+PATIENTS_DATABASE_URL="postgresql://patients_user:patients_pass@localhost:5434/pacientes_db"
 ```
 
 ### **Configuración del Microservicio de Formularios**
