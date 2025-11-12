@@ -14,6 +14,7 @@ steps:
     id: build-image
     args:
       - build
+      - --no-cache
       - --tag
       - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
       - .
