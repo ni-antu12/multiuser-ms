@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException, HttpException, HttpStatus, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { FormsMicroserviceService } from './forms-microservice.service';
 import { CreateFamilyGroupDto } from './dto/create-family-group.dto';
 import { UpdateFamilyGroupDto } from './dto/update-family-group.dto';
 import { CreateLeaderDto } from './dto/create-leader.dto';
@@ -8,38 +7,28 @@ import { UpdateLeaderDto } from './dto/update-leader.dto';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import { PatientLoginDto } from './dto/patient-login.dto';
 import * as bcrypt from 'bcryptjs';
+import { generateShortUuid } from '../utils/identifiers';
+import { BASIC_USER_SELECT, FAMILY_GROUP_WITH_USERS_AND_COUNT_INCLUDE, FAMILY_GROUP_WITH_USERS_INCLUDE, USER_WITH_GROUP_SELECT } from '../utils/prisma-selects';
+import { findPatientByRut, upsertPatientRecord } from '../utils/patient-record';
+import { EnsureFamilyGroupResult, FamilyGroupWithUsers, FamilyGroupWithUsersAndCount, LoginPatientResult } from '../types/multiuser';
 
 @Injectable()
 export class MultiuserService {
-  constructor(
-    private prisma: PrismaService,
-    private formsMicroserviceService: FormsMicroserviceService
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
-  /**
-   * Genera un UUID corto de 8 caracteres alfanuméricos
-   * @returns UUID corto único
-   */
-  private generateShortUuid(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < 8; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }
-
-  /**
-   * Genera una contraseña aleatoria
-   */
   private generateRandomPassword(): string {
     return Math.random().toString(36).slice(-8);
+  }
+
+  private generateFallbackEmail(rut: string): string {
+    const sanitized = rut.replace(/[^0-9a-zA-Z]/g, '');
+    return `user_${sanitized}@example.com`;
   }
 
   private async generateUniqueShortUuid(model: 'familyGroup' | 'user'): Promise<string> {
     let attempts = 0;
     while (attempts < 10) {
-      const candidate = this.generateShortUuid();
+      const candidate = generateShortUuid();
       const exists =
         model === 'familyGroup'
           ? await this.prisma.familyGroup.findUnique({ where: { uuid: candidate } })
@@ -55,7 +44,7 @@ export class MultiuserService {
   private async generateUniqueTokenApp(): Promise<string> {
     let attempts = 0;
     while (attempts < 10) {
-      const candidate = this.generateShortUuid();
+      const candidate = generateShortUuid();
       const exists = await this.prisma.familyGroup.findFirst({
         where: { tokenApp: candidate }
       });
@@ -65,84 +54,6 @@ export class MultiuserService {
       attempts++;
     }
     throw new ConflictException('No fue posible generar un token único. Intenta nuevamente.');
-  }
-
-  private generateFallbackEmail(rut: string): string {
-    const sanitized = rut.replace(/[^0-9a-zA-Z]/g, '');
-    return `user_${sanitized}@example.com`;
-  }
-
-  private async findPatientByRut(rut: string) {
-    const result = await this.prisma.$queryRaw<Array<{
-      rut: string;
-      nombre: string;
-      apellido_paterno: string;
-      apellido_materno: string | null;
-      correo: string;
-      telefono: string | null;
-      password: string;
-    }>>`
-      SELECT rut, nombre, apellido_paterno, apellido_materno, correo, telefono, password
-      FROM "patients"
-      WHERE rut = ${rut}
-      LIMIT 1
-    `;
-
-    const patient = result[0];
-
-    if (!patient) {
-      return null;
-    }
-
-    return {
-      rut: patient.rut,
-      nombre: patient.nombre,
-      apellidoPaterno: patient.apellido_paterno,
-      apellidoMaterno: patient.apellido_materno,
-      correo: patient.correo,
-      telefono: patient.telefono,
-      password: patient.password,
-    };
-  }
-
-  private async upsertPatientRecord(data: {
-    rut: string;
-    nombre: string;
-    apellidoPaterno: string;
-    apellidoMaterno?: string | null;
-    correo: string;
-    telefono?: string | null;
-    password?: string | null;
-  }) {
-    await this.prisma.$executeRaw`
-      INSERT INTO "patients" (rut, nombre, apellido_paterno, apellido_materno, correo, telefono, password)
-      VALUES (${data.rut}, ${data.nombre}, ${data.apellidoPaterno}, ${data.apellidoMaterno ?? null}, ${data.correo}, ${data.telefono ?? null}, ${data.password ?? 'demo123'})
-      ON CONFLICT (rut)
-      DO UPDATE SET
-        nombre = EXCLUDED.nombre,
-        apellido_paterno = EXCLUDED.apellido_paterno,
-        apellido_materno = EXCLUDED.apellido_materno,
-        correo = EXCLUDED.correo,
-        telefono = EXCLUDED.telefono,
-        updated_at = CURRENT_TIMESTAMP
-    `;
-  }
-
-
-  /**
-   * Calcula la edad basada en la fecha de nacimiento
-   */
-  private calculateAge(birthDate: string): number {
-    const today = new Date();
-    const birth = new Date(birthDate);
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
-    
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-      age--;
-    }
-    
-    return age;
   }
 
   // ===== DASHBOARD =====
@@ -197,17 +108,6 @@ export class MultiuserService {
       throw new ConflictException('Grupo familiar con este UUID ya existe');
     }
 
-    // Validar que el líder existe en el microservicio de formularios dinámicos
-    try {
-      const leaderValidation = await this.formsMicroserviceService.validateLeader(leader);
-      
-      if (!leaderValidation.exists) {
-        throw new NotFoundException('El usuario líder no existe en el sistema de formularios dinámicos');
-      }
-    } catch (error) {
-      console.warn('No se pudo validar el líder con el microservicio de formularios:', error.message);
-    }
-
     // Crear el grupo familiar
     const familyGroup = await this.prisma.familyGroup.create({
       data: {
@@ -237,7 +137,7 @@ export class MultiuserService {
   async createMyFamilyGroupSimple(userRut: string, dto?: CreateMyFamilyGroupDto) {
     console.log('🚀 MÉTODO SIMPLE: Creando/asegurando grupo familiar para RUT:', userRut);
 
-    const patientRecord = await this.findPatientByRut(userRut);
+    const patientRecord = await findPatientByRut(this.prisma, userRut);
 
     if (!patientRecord) {
       throw new NotFoundException('Paciente no encontrado en la base de pacientes');
@@ -319,20 +219,7 @@ export class MultiuserService {
     const updatedUser = await this.prisma.user.update({
       where: { uuid: user.uuid },
       data: { familyGroupsUuid: familyGroup.uuid },
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        familyGroupsUuid: true,
-        email: true,
-        firstName: true,
-        lastNamePaterno: true,
-        lastNameMaterno: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: USER_WITH_GROUP_SELECT
     });
 
     console.log('✅ Grupo familiar creado o confirmado:', familyGroup.uuid);
@@ -350,14 +237,14 @@ export class MultiuserService {
     firstName?: string;
     lastNamePaterno?: string;
     lastNameMaterno?: string;
-  }) {
+  }): Promise<EnsureFamilyGroupResult> {
     const { rut } = payload;
 
     if (!rut) {
       throw new BadRequestException('El RUT es obligatorio');
     }
 
-    const patientRecord = await this.findPatientByRut(rut);
+    const patientRecord = await findPatientByRut(this.prisma, rut);
 
     if (!patientRecord && !payload.email && !payload.firstName) {
       throw new NotFoundException('Paciente no encontrado en la base de pacientes');
@@ -452,12 +339,13 @@ export class MultiuserService {
         createdGroup = true;
       }
 
+      const normalizedUser = await tx.user.findUniqueOrThrow({
+        where: { uuid: user.uuid },
+        select: USER_WITH_GROUP_SELECT
+      });
+
       return {
-        user: {
-          ...user,
-          familyGroupsUuid: familyGroup.uuid,
-          isLeader: true
-        },
+        user: normalizedUser,
         familyGroup,
         createdUser,
         createdGroup,
@@ -468,10 +356,10 @@ export class MultiuserService {
     });
   }
 
-  async loginPatient(dto: PatientLoginDto) {
+  async loginPatient(dto: PatientLoginDto): Promise<LoginPatientResult> {
     const { rut, password } = dto;
 
-    const patient = await this.findPatientByRut(rut);
+    const patient = await findPatientByRut(this.prisma, rut);
 
     if (!patient || patient.password !== password) {
       throw new UnauthorizedException('Credenciales inválidas');
@@ -498,51 +386,16 @@ export class MultiuserService {
     };
   }
 
-  async findAllFamilyGroups() {
+  async findAllFamilyGroups(): Promise<FamilyGroupWithUsersAndCount[]> {
     return this.prisma.familyGroup.findMany({
-      include: {
-        users: {
-          select: {
-            id: true,
-            uuid: true,
-            rut: true,
-            email: true,
-            firstName: true,
-            lastNamePaterno: true,
-            lastNameMaterno: true,
-            isActive: true,
-            isLeader: true,
-            createdAt: true,
-            updatedAt: true
-          }
-        },
-        _count: {
-          select: { users: true }
-        }
-      }
+      include: FAMILY_GROUP_WITH_USERS_AND_COUNT_INCLUDE
     });
   }
 
-  async findFamilyGroupByUuid(uuid: string) {
+  async findFamilyGroupByUuid(uuid: string): Promise<FamilyGroupWithUsers> {
     const familyGroup = await this.prisma.familyGroup.findUnique({
       where: { uuid },
-      include: {
-        users: {
-          select: {
-            id: true,
-            uuid: true,
-            rut: true,
-            email: true,
-            firstName: true,
-            lastNamePaterno: true,
-            lastNameMaterno: true,
-            isActive: true,
-            isLeader: true,
-            createdAt: true,
-            updatedAt: true
-          }
-        }
-      }
+      include: FAMILY_GROUP_WITH_USERS_INCLUDE
     });
 
     if (!familyGroup) {
@@ -617,23 +470,7 @@ export class MultiuserService {
   async getFamilyGroupMembers(uuid: string) {
     const familyGroup = await this.prisma.familyGroup.findUnique({
       where: { uuid },
-      include: {
-        users: {
-          select: {
-            id: true,
-            uuid: true,
-            rut: true,
-            email: true,
-            firstName: true,
-            lastNamePaterno: true,
-            lastNameMaterno: true,
-            isActive: true,
-            isLeader: true,
-            createdAt: true,
-            updatedAt: true
-          }
-        }
-      }
+      include: FAMILY_GROUP_WITH_USERS_INCLUDE
     });
 
     if (!familyGroup) {
@@ -646,23 +483,7 @@ export class MultiuserService {
   async getFamilyGroupByToken(tokenApp: string) {
     const familyGroup = await this.prisma.familyGroup.findFirst({
       where: { tokenApp },
-      include: {
-        users: {
-          select: {
-            id: true,
-            uuid: true,
-            rut: true,
-            email: true,
-            firstName: true,
-            lastNamePaterno: true,
-            lastNameMaterno: true,
-            isActive: true,
-            isLeader: true,
-            createdAt: true,
-            updatedAt: true
-          }
-        }
-      }
+      include: FAMILY_GROUP_WITH_USERS_INCLUDE
     });
 
     if (!familyGroup) {
@@ -675,19 +496,7 @@ export class MultiuserService {
   async getUsersByFamilyGroup(familyGroupUuid: string) {
     const users = await this.prisma.user.findMany({
       where: { familyGroupsUuid: familyGroupUuid },
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        email: true,
-        firstName: true,
-        lastNamePaterno: true,
-        lastNameMaterno: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: BASIC_USER_SELECT
     });
 
     return users;
@@ -695,7 +504,7 @@ export class MultiuserService {
 
   // ===== LEADERS =====
   async createLeader(createLeaderDto: CreateLeaderDto) {
-    const { uuid = this.generateShortUuid(), rut, email, password, firstName, lastNamePaterno, lastNameMaterno } = createLeaderDto;
+    const { uuid = generateShortUuid(), rut, email, password, firstName, lastNamePaterno, lastNameMaterno } = createLeaderDto;
 
     // Verificar si el usuario ya existe
     const existingUser = await this.prisma.user.findFirst({
@@ -735,19 +544,7 @@ export class MultiuserService {
         isLeader: true,
         familyGroupsUuid: null
       },
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        email: true,
-        firstName: true,
-        lastNamePaterno: true,
-        lastNameMaterno: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: BASIC_USER_SELECT
     });
 
     return {
@@ -774,18 +571,7 @@ export class MultiuserService {
           ]
         },
         select: {
-          id: true,
-          uuid: true,
-          rut: true,
-          email: true,
-          firstName: true,
-          lastNamePaterno: true,
-          lastNameMaterno: true,
-          isActive: true,
-          isLeader: true,
-          familyGroupsUuid: true,
-          createdAt: true,
-          updatedAt: true
+          ...USER_WITH_GROUP_SELECT
         }
       });
     }
@@ -793,18 +579,7 @@ export class MultiuserService {
     return this.prisma.user.findMany({
       where: whereClause,
       select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        email: true,
-        firstName: true,
-        lastNamePaterno: true,
-        lastNameMaterno: true,
-        isActive: true,
-        isLeader: true,
-        familyGroupsUuid: true,
-        createdAt: true,
-        updatedAt: true
+        ...USER_WITH_GROUP_SELECT
       }
     });
   }
@@ -839,14 +614,14 @@ export class MultiuserService {
       throw new ConflictException('El grupo familiar ha alcanzado el máximo de miembros');
     }
 
-    let patientRecord = await this.findPatientByRut(rut);
+    let patientRecord = await findPatientByRut(this.prisma, rut);
 
     if (!patientRecord) {
       if (!firstName || !lastNamePaterno || !email) {
         throw new BadRequestException('Paciente no encontrado. Proporciona nombre, apellido paterno y email.');
       }
 
-      await this.upsertPatientRecord({
+      await upsertPatientRecord(this.prisma, {
         rut,
         nombre: firstName,
         apellidoPaterno: lastNamePaterno,
@@ -856,7 +631,7 @@ export class MultiuserService {
         password: 'demo123'
       });
 
-      patientRecord = await this.findPatientByRut(rut);
+      patientRecord = await findPatientByRut(this.prisma, rut);
     } else {
       const updatedNombre = firstName ?? patientRecord.nombre;
       const updatedApellidoP = lastNamePaterno ?? patientRecord.apellidoPaterno;
@@ -872,7 +647,7 @@ export class MultiuserService {
         updatedCorreo !== patientRecord.correo ||
         updatedTelefono !== patientRecord.telefono
       ) {
-        await this.upsertPatientRecord({
+        await upsertPatientRecord(this.prisma, {
           rut,
           nombre: updatedNombre,
           apellidoPaterno: updatedApellidoP,
@@ -882,7 +657,7 @@ export class MultiuserService {
           password: patientRecord.password
         });
 
-        patientRecord = await this.findPatientByRut(rut);
+        patientRecord = await findPatientByRut(this.prisma, rut);
       }
     }
 
@@ -940,7 +715,7 @@ export class MultiuserService {
 
     const newUser = await this.prisma.user.create({
       data: {
-        uuid: this.generateShortUuid(),
+        uuid: generateShortUuid(),
         rut,
         email: memberEmail,
         username: generatedUsername,
@@ -1026,18 +801,7 @@ export class MultiuserService {
         uuid
       },
       select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        email: true,
-        firstName: true,
-        lastNamePaterno: true,
-        lastNameMaterno: true,
-        isActive: true,
-        isLeader: true,
-        familyGroupsUuid: true,
-        createdAt: true,
-        updatedAt: true
+        ...USER_WITH_GROUP_SELECT
       }
     });
 
@@ -1089,19 +853,7 @@ export class MultiuserService {
     const updatedLeader = await this.prisma.user.update({
       where: { uuid },
       data: updateLeaderDto,
-      select: {
-        id: true,
-        uuid: true,
-        rut: true,
-        email: true,
-        firstName: true,
-        lastNamePaterno: true,
-        lastNameMaterno: true,
-        isActive: true,
-        isLeader: true,
-        createdAt: true,
-        updatedAt: true
-      }
+      select: BASIC_USER_SELECT
     });
 
     return {
@@ -1131,7 +883,7 @@ export class MultiuserService {
   }
 
   async getPatientProfile(rut: string) {
-    const patient = await this.findPatientByRut(rut);
+    const patient = await findPatientByRut(this.prisma, rut);
 
     if (!patient) {
       throw new NotFoundException('Paciente no encontrado');
