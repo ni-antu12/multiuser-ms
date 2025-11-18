@@ -12,7 +12,7 @@ substitutions:
   _REGION: southamerica-west1
   _AR_HOST: southamerica-west1-docker.pkg.dev
   _AR_REPOSITORY: cloud-run-source-deploy
-  _SECRET_DATABASE_URL: projects/$PROJECT_ID/secrets/DATABASE_URL:latest
+  _SECRET_DATABASE_URL: DATABASE_URL:latest
 
 steps:
   # Construye la imagen usando el Dockerfile del repositorio
@@ -65,6 +65,7 @@ steps:
       - --min-instances=0
       - --max-instances=10
       - --set-secrets=DATABASE_URL=${_SECRET_DATABASE_URL}
+      - --project=${PROJECT_ID}
 
 images:
   - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
