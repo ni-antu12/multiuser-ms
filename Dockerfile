@@ -28,4 +28,4 @@ EXPOSE 8080
 RUN test -f dist/src/main.js || (echo "Error: dist/src/main.js no existe" && exit 1)
 
 # Ejecutamos la versión compilada directamente (más rápido que npm run)
-CMD ["node", "dist/src/main.js"]
+CMD ["node", "dist/src/main.js"] 
