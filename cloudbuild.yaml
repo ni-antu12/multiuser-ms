@@ -1,12 +1,17 @@
 options:
   substitution_option: ALLOW_LOOSE
 
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/DATABASE_URL/versions/latest
+      env: 'DATABASE_URL'
+
 substitutions:
   _SERVICE_NAME: multiuser-ms
   _REGION: southamerica-west1
   _AR_HOST: southamerica-west1-docker.pkg.dev
   _AR_REPOSITORY: multiuser-ms
-  # _SECRET_DATABASE_URL: projects/$PROJECT_ID/secrets/DATABASE_URL:latest
+  _SECRET_DATABASE_URL: projects/$PROJECT_ID/secrets/DATABASE_URL:latest
 
 steps:
   # Construye la imagen usando el Dockerfile del repositorio
@@ -25,6 +30,21 @@ steps:
       - push
       - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}
 
+  # Ejecuta migraciones de Prisma antes del despliegue
+  - name: node:20
+    id: run-migrations
+    entrypoint: bash
+    dir: '.'
+    secretEnv: ['DATABASE_URL']
+    args:
+      - -c
+      - |
+        echo "Instalando dependencias para migraciones..."
+        npm install
+        echo "Ejecutando migraciones de Prisma..."
+        npx prisma migrate deploy
+        echo "✅ Migraciones completadas exitosamente."
+
   # Despliega la imagen en Cloud Run
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     id: deploy-cloud-run
@@ -38,8 +58,12 @@ steps:
       - --platform=managed
       - --allow-unauthenticated
       - --port=8080
-      # Sustituye la línea siguiente por tu secreto en Secret Manager (o elimínala si usas variables en Cloud Run)
-      # - --set-secrets=DATABASE_URL=${_SECRET_DATABASE_URL}
+      - --timeout=300
+      - --cpu=1
+      - --memory=512Mi
+      - --min-instances=0
+      - --max-instances=10
+      - --set-secrets=DATABASE_URL=${_SECRET_DATABASE_URL}
 
 images:
   - ${_AR_HOST}/${PROJECT_ID}/${_AR_REPOSITORY}/${_SERVICE_NAME}:${SHORT_SHA}

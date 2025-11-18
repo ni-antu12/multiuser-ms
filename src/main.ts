@@ -5,13 +5,13 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Opcional: prefijo global para todos los endpoints (ej: /api)
-  app.setGlobalPrefix('api');
+  // Prefijo global siguiendo el patrón del gateway: /api/v1
+  app.setGlobalPrefix('api/v1');
 
   // Opcional: habilitar CORS
   app.enableCors();
 
-  // Configuración de Swagger
+  // Configuración de Swagger siguiendo el patrón del gateway
   const publicBaseUrl =
     process.env.PUBLIC_BASE_URL ||
     'https://multiuser-ms-759723220385.southamerica-west1.run.app';
@@ -19,21 +19,46 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('Multi-User Microservice API')
     .setDescription('API para gestión de grupos familiares con límite de 8 miembros')
-    .setVersion('1.0')
+    .setVersion('1.0.0')
+    .addServer(publicBaseUrl, 'Cloud Run')
+    .addServer(`${publicBaseUrl}/api/v1`, 'Gateway Path')
     .addTag('multiuser', '🎯 Gestión completa de usuarios y grupos familiares')
     .addTag('utils', '🛠️ Utilidades como generación de UUIDs')
-    .addServer(publicBaseUrl, 'Cloud Run')
-
+    // Configuración de seguridad X-API-Key como en el gateway
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'X-API-Key',
+        in: 'header',
+        description: 'API Key para autenticación del gateway',
+      },
+      'api_key',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  
+  // Aplicar seguridad globalmente a todos los endpoints
+  // Esto hace que todos los endpoints requieran X-API-Key por defecto
+  Object.values(document.paths || {}).forEach((path: any) => {
+    Object.values(path || {}).forEach((method: any) => {
+      if (method && typeof method === 'object' && !method.security) {
+        method.security = [{ api_key: [] }];
+      }
+    });
+  });
+
+  SwaggerModule.setup('api/v1/docs', app, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+    },
+  });
 
   // Puerto en el que escuchará la app
   const port = process.env.PORT || 8080;
   await app.listen(port, '0.0.0.0');
 
   console.log(`🚀 Servicio desplegado escuchando en el puerto ${port}`);
-  console.log(`📚 Swagger UI disponible en: ${publicBaseUrl}/api/docs`);
+  console.log(`📚 Swagger UI disponible en: ${publicBaseUrl}/api/v1/docs`);
 }
 bootstrap();
