@@ -1,6 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import * as fs from 'fs';
+
+// Cargar DATABASE_URL desde el secreto JSON montado por Cloud Run
+if (!process.env.DATABASE_URL) {
+  try {
+    const secrets = JSON.parse(fs.readFileSync('/secrets/multiuser-secrets.json', 'utf8'));
+    if (secrets.DATABASE_URL) {
+      process.env.DATABASE_URL = secrets.DATABASE_URL;
+    }
+  } catch (error) {
+    // El archivo no existe o hay error, usar variables de entorno existentes
+  }
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
