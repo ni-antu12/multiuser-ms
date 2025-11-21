@@ -27,7 +27,7 @@ async function bootstrap() {
   // Configuración de Swagger siguiendo el patrón del gateway
   const publicBaseUrl =
     process.env.PUBLIC_BASE_URL ||
-    'https://multiuser-ms-759723220385.southamerica-west1.run.app';
+    'https://multiuser-ms-695418284847.southamerica-west1.run.app';
 
   const config = new DocumentBuilder()
     .setTitle('Multi-User Microservice API')
