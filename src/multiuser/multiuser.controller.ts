@@ -1,26 +1,25 @@
-import { Controller, Get, Post, Body, Param, Delete, Headers, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, Headers, HttpException, HttpStatus, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { MultiuserService } from './multiuser.service';
 import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import { AddMemberDto } from './dto/add-member.dto';
 import { EnsureFamilyGroupDto } from './dto/ensure-family-group.dto';
-import { PatientLoginDto } from './dto/patient-login.dto';
+import { RutAuthGuard } from '../auth/guards/rut-auth.guard';
+import { CurrentUser } from '../auth/decorators/user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
+import { EnsureFamilyGroupFromRutInterceptor } from '../auth/interceptors/ensure-family-group-from-rut.interceptor';
 
 @ApiTags('multiuser')
 @Controller('multiuser')
+@UseGuards(RutAuthGuard)
+@UseInterceptors(EnsureFamilyGroupFromRutInterceptor)
 export class MultiuserController {
   constructor(private readonly multiuserService: MultiuserService) {}
 
   // ===== FAMILY GROUPS =====
   @ApiOperation({ 
-    summary: '🏥 Crear mi grupo familiar (Centro Médico)',
-    description: 'Crea automáticamente un grupo familiar para el paciente autenticado. Este endpoint está diseñado específicamente para centros médicos donde los datos del paciente se obtienen desde la BD del centro. El sistema valida automáticamente que el paciente sea mayor de 18 años, no pertenezca a otro grupo y no tenga ya un grupo como líder. El líder se asocia automáticamente como el primer miembro del grupo.'
-  })
-  @ApiHeader({
-    name: 'X-User-RUT',
-    required: true,
-    description: 'RUT del paciente autenticado (obtenido del token de sesión)',
-    example: '12345678-9'
+    summary: '🏥 Crear/obtener mi grupo familiar',
+    description: 'Garantiza que el usuario autenticado tenga un grupo familiar. Si no existe, lo crea automáticamente y lo asigna como líder. El usuario se obtiene del token JWT enviado en el header Authorization. El grupo familiar se asegura automáticamente en cada petición autenticada.'
   })
   @ApiBody({
     description: 'Datos opcionales del grupo (el tokenApp se genera automáticamente si no se proporciona)',
@@ -116,45 +115,94 @@ export class MultiuserController {
     }
   })
   @Post('my-family-group')
+  @ApiHeader({
+    name: 'X-User-RUT',
+    required: true,
+    description: 'RUT del usuario autenticado (obtenido de la sesión local de la app móvil)',
+    example: '12345678-9'
+  })
   createMyFamilyGroup(
-    @Headers('x-user-rut') userRut: string,
+    @CurrentUser() user: any,
     @Body() createMyFamilyGroupDto?: CreateMyFamilyGroupDto
   ) {
-    console.log('🎯 Controller: createMyFamilyGroup llamado con RUT:', userRut);
-    if (!userRut) {
-      console.log('❌ Controller: Header X-User-RUT faltante');
+    if (!user?.rut) {
       throw new HttpException(
-        'El header X-User-RUT es requerido',
+        'No se pudo obtener el RUT del usuario',
         HttpStatus.BAD_REQUEST
       );
     }
-    console.log('✅ Controller: Llamando al servicio SIMPLE...');
     
-    // MÉTODO SIMPLE: Crear datos básicos directamente
-    return this.multiuserService.createMyFamilyGroupSimple(userRut, createMyFamilyGroupDto);
+    // El grupo familiar ya se aseguró automáticamente por el interceptor
+    // Este endpoint ahora solo retorna la información del grupo existente o recién creado
+    return this.multiuserService.createMyFamilyGroupSimple(user.rut);
   }
 
   @ApiOperation({
-    summary: 'Asegurar grupo familiar para usuario autenticado',
-    description: 'Garantiza que el usuario tenga un grupo familiar propio. Si no existe, lo crea y lo asigna como líder.'
+    summary: '🔐 Inicializar sesión y garantizar grupo familiar',
+    description: 'Endpoint principal para el login de la app móvil. Garantiza que el usuario tenga un grupo familiar propio. Si no existe, crea el usuario y su grupo familiar automáticamente. Este endpoint debe llamarse después del login exitoso en el servicio de autenticación para asociar al usuario con su grupo familiar.'
   })
   @ApiResponse({
     status: 200,
-    description: 'Información del grupo y usuario retornada'
+    description: 'Usuario y grupo familiar garantizados. Retorna información completa del usuario y su grupo familiar.',
+    schema: {
+      type: 'object',
+      properties: {
+        user: {
+          type: 'object',
+          properties: {
+            uuid: { type: 'string', example: 'nP7vQ8rT' },
+            rut: { type: 'string', example: '12345678-9' },
+            email: { type: 'string', example: 'usuario@ejemplo.com' },
+            firstName: { type: 'string', example: 'Juan' },
+            lastNamePaterno: { type: 'string', example: 'Pérez' },
+            isLeader: { type: 'boolean', example: true },
+            familyGroupsUuid: { type: 'string', example: 'aB3x9K2m' }
+          }
+        },
+        familyGroup: {
+          type: 'object',
+          properties: {
+            uuid: { type: 'string', example: 'aB3x9K2m' },
+            leader: { type: 'string', example: 'nP7vQ8rT' },
+            tokenApp: { type: 'string', example: 'token123' },
+            maxMembers: { type: 'number', example: 8 }
+          }
+        },
+        createdUser: { type: 'boolean', example: false },
+        createdGroup: { type: 'boolean', example: false },
+        message: { type: 'string', example: 'El usuario ya contaba con un grupo familiar' }
+      }
+    }
   })
-  @Post('session/ensure-group')
-  ensureFamilyGroup(@Body() ensureFamilyGroupDto: EnsureFamilyGroupDto) {
-    return this.multiuserService.ensureFamilyGroupForUser(ensureFamilyGroupDto);
+  @ApiResponse({
+    status: 400,
+    description: 'RUT inválido o faltante'
+  })
+  @Post('session/init')
+  initSession(
+    @CurrentUser() user: any,
+    @Body() ensureFamilyGroupDto?: EnsureFamilyGroupDto
+  ) {
+    // Si el usuario viene del guard, usar su RUT
+    const rut = user?.rut || ensureFamilyGroupDto?.rut;
+    
+    if (!rut) {
+      throw new HttpException(
+        'RUT es requerido. Envíalo en el header X-User-RUT o en el body',
+        HttpStatus.BAD_REQUEST
+      );
+    }
+
+    // Usar los datos del usuario del guard si están disponibles, o los del body
+    return this.multiuserService.ensureFamilyGroupForUser({
+      rut,
+      email: user?.email || ensureFamilyGroupDto?.email,
+      firstName: user?.firstName || ensureFamilyGroupDto?.firstName,
+      lastNamePaterno: user?.lastNamePaterno || ensureFamilyGroupDto?.lastNamePaterno,
+      lastNameMaterno: user?.lastNameMaterno || ensureFamilyGroupDto?.lastNameMaterno,
+    });
   }
 
-  @ApiOperation({
-    summary: 'Login básico (simulación centro médico)',
-    description: 'Autentica al paciente contra la base local de pacientes usando rut y contraseña y garantiza su grupo familiar.'
-  })
-  @Post('session/login')
-  loginPatient(@Body() patientLoginDto: PatientLoginDto) {
-    return this.multiuserService.loginPatient(patientLoginDto);
-  }
 
   @ApiOperation({ 
     summary: 'Listar todos los grupos familiares',
@@ -431,12 +479,18 @@ export class MultiuserController {
     }
   })
   @Post('family-groups/:uuid/members')
+  @ApiHeader({
+    name: 'X-User-RUT',
+    required: true,
+    description: 'RUT del líder del grupo familiar',
+    example: '12345678-9'
+  })
   addMemberToFamilyGroup(
     @Param('uuid') uuid: string,
     @Body() addMemberDto: AddMemberDto,
-    @Headers('x-user-uuid') leaderUuid?: string
+    @CurrentUser() user: any
   ) {
-    return this.multiuserService.addMemberToFamilyGroup(uuid, addMemberDto, leaderUuid);
+    return this.multiuserService.addMemberToFamilyGroup(uuid, addMemberDto, user?.uuid);
   }
 
   @ApiOperation({
@@ -444,12 +498,21 @@ export class MultiuserController {
     description: 'El líder del grupo puede eliminar a un miembro específico.'
   })
   @Delete('family-groups/:uuid/members/:memberUuid')
+  @ApiHeader({
+    name: 'X-User-RUT',
+    required: true,
+    description: 'RUT del líder del grupo familiar',
+    example: '12345678-9'
+  })
   removeMemberFromFamilyGroup(
     @Param('uuid') uuid: string,
     @Param('memberUuid') memberUuid: string,
-    @Headers('x-user-uuid') leaderUuid: string
+    @CurrentUser() user: any
   ) {
-    return this.multiuserService.removeMemberFromFamilyGroup(uuid, memberUuid, leaderUuid);
+    if (!user?.uuid) {
+      throw new HttpException('No se pudo obtener el UUID del usuario', HttpStatus.BAD_REQUEST);
+    }
+    return this.multiuserService.removeMemberFromFamilyGroup(uuid, memberUuid, user.uuid);
   }
 
   @ApiOperation({
@@ -457,11 +520,17 @@ export class MultiuserController {
     description: 'Permite que un miembro abandone el grupo al que pertenece.'
   })
   @Post('family-groups/members/leave')
-  leaveFamilyGroup(@Headers('x-user-uuid') userUuid: string) {
-    if (!userUuid) {
-      throw new HttpException('El header X-User-UUID es requerido', HttpStatus.BAD_REQUEST);
+  @ApiHeader({
+    name: 'X-User-RUT',
+    required: true,
+    description: 'RUT del usuario que abandona el grupo',
+    example: '12345678-9'
+  })
+  leaveFamilyGroup(@CurrentUser() user: any) {
+    if (!user?.uuid) {
+      throw new HttpException('No se pudo obtener el UUID del usuario', HttpStatus.BAD_REQUEST);
     }
-    return this.multiuserService.leaveFamilyGroup(userUuid);
+    return this.multiuserService.leaveFamilyGroup(user.uuid);
   }
 
   // ===== HEALTH CHECK =====
@@ -481,6 +550,7 @@ export class MultiuserController {
       }
     }
   })
+  @Public()
   @Get('health')
   healthCheck() {
     return {

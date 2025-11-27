@@ -36,16 +36,4 @@ export interface EnsureFamilyGroupResult {
   message: string;
 }
 
-// Extiende la respuesta anterior para incluir los datos del paciente
-// devueltos durante el proceso de login.
-export interface LoginPatientResult extends EnsureFamilyGroupResult {
-  patient: {
-    rut: string;
-    nombre: string;
-    apellidoPaterno: string;
-    apellidoMaterno: string | null;
-    correo: string;
-    telefono: string | null;
-  };
-}
 
