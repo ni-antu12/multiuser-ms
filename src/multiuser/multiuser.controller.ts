@@ -1,7 +1,6 @@
 import { Controller, Get, Post, Body, Param, Delete, Headers, HttpException, HttpStatus, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { MultiuserService } from './multiuser.service';
-import { CreateMyFamilyGroupDto } from './dto/create-my-family-group.dto';
 import { AddMemberDto } from './dto/add-member.dto';
 import { EnsureFamilyGroupDto } from './dto/ensure-family-group.dto';
 import { RutAuthGuard } from '../auth/guards/rut-auth.guard';
@@ -122,8 +121,7 @@ export class MultiuserController {
     example: '12345678-9'
   })
   createMyFamilyGroup(
-    @CurrentUser() user: any,
-    @Body() createMyFamilyGroupDto?: CreateMyFamilyGroupDto
+    @CurrentUser() user: any
   ) {
     if (!user?.rut) {
       throw new HttpException(

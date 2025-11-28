@@ -1,180 +1,187 @@
-# Multiuser MS
+# multiuser-ms
 
-Microservicio NestJS para la gestión de grupos familiares y usuarios. El servicio corre en Google Cloud Run y persiste datos en una base PostgreSQL alojada en Neon. Actualmente el repositorio únicamente contiene el backend; cualquier referencia a frontend móvil o a microservicios externos fue eliminada del código.
+Microservicio para gestión de usuarios y grupos familiares desarrollado con NestJS.
 
-## Resumen funcional
+---
 
-- Creación y aseguramiento de grupos familiares para pacientes autenticados (`POST /multiuser/my-family-group`, `POST /multiuser/session/login`).
-- Administración manual de líderes, miembros y grupos familiares para casos administrativos.
-- Selecciones y utilidades centralizadas (`src/utils`) que evitan duplicar lógica Prisma o SQL sin procesar.
-- Tipos reutilizables (`src/types/multiuser.ts`) para mantener consistencia entre servicio y controladores.
-- Documentación Swagger disponible en `/api/docs` tanto en el despliegue como en entornos locales.
-- Pipeline de construcción y despliegue automatizado con Cloud Build (`cloudbuild.yaml`).
+## 📋 Descripción
 
-## Tecnologías principales
+**multiuser-ms** es un microservicio que gestiona usuarios y grupos familiares con un límite de 8 miembros por grupo. Está diseñado para ser consumido por una aplicación móvil que ya maneja autenticación externa. El servicio garantiza que cada usuario autenticado tenga un grupo familiar propio y sea líder del mismo.
 
-- **Runtime**: Node.js 20 / NestJS 10.
-- **ORM**: Prisma 6 contra PostgreSQL (Neon).
-- **Autenticación básica**: bcrypt para hash de contraseñas generadas automáticamente.
-- **Documentación**: `@nestjs/swagger`.
+### Características Principales
 
-No se utilizan librerías HTTP externas (Axios se eliminó porque ya no hay comunicación con microservicios remotos).
+- ✅ Gestión automática de grupos familiares
+- ✅ Autenticación basada en RUT
+- ✅ Límite de 8 miembros por grupo familiar
+- ✅ Creación automática de usuarios y grupos al primer acceso
+- ✅ Desplegado en Google Cloud Run
 
-## Estructura relevante
+---
 
-```
-src/
-├── app.module.ts
-├── main.ts                 # Bootstrap + configuración Swagger
-├── multiuser/
-│   ├── dto/                # DTO activos (creación/actualización de grupos, líderes, etc.)
-│   ├── multiuser.controller.ts
-│   └── multiuser.service.ts
-├── types/
-│   └── multiuser.ts        # Tipos derivados de Prisma
-└── utils/
-    ├── identifiers.ts      # Generación de UUID corto (8 caracteres)
-    ├── patient-record.ts   # Lectura/actualización directa en tabla patients (SQL crudo)
-    └── prisma-selects.ts   # Select/include compartidos para Prisma
+## 🚀 Inicio Rápido
 
-prisma/
-├── schema.prisma
-└── migrations/
-
-cloudbuild.yaml             # Pipeline Cloud Build → Cloud Run
-Dockerfile                  # Imagen base para el servicio
-README.md                   # Este documento
-```
-
-## Configuración de Secretos
-
-El proyecto utiliza **Google Secret Manager** para gestionar credenciales de forma segura. El secreto `multiuser-secrets` contiene un archivo JSON con las variables de entorno sensibles.
-
-### Estructura del secreto
-
-El secreto `multiuser-secrets` debe contener un archivo JSON con el siguiente formato:
-
-```json
-{
-  "DATABASE_URL": "postgresql://<usuario>:<password>@<host>.neon.tech/<database>?sslmode=require&channel_binding=require"
-}
-```
-
-### Crear/Actualizar el secreto
-
-1. **Desde la consola web de Google Cloud:**
-   - Ve a **Secret Manager** en Google Cloud Console
-   - Crea o actualiza el secreto `multiuser-secrets`
-   - Sube el archivo JSON usando la opción "Upload file"
-
-2. **Desde la línea de comandos:**
-   ```bash
-   # Crear el secreto
-   gcloud secrets create multiuser-secrets \
-     --data-file=multiuser-secrets.json \
-     --project=TU_PROJECT_ID \
-     --replication-policy="automatic"
-   
-   # O actualizar versión existente
-   gcloud secrets versions add multiuser-secrets \
-     --data-file=multiuser-secrets.json \
-     --project=TU_PROJECT_ID
-   ```
-
-### Permisos requeridos
-
-Asegúrate de que Cloud Build y Cloud Run tengan permisos para acceder al secreto:
+### Instalación Local
 
 ```bash
-# Obtener PROJECT_NUMBER
-PROJECT_NUMBER=$(gcloud projects describe TU_PROJECT_ID --format="value(projectNumber)")
+# Clonar el repositorio
+git clone <repository-url>
+cd multiuser-ms
 
-# Permisos para Cloud Build
-gcloud secrets add-iam-policy-binding multiuser-secrets \
-  --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project=TU_PROJECT_ID
-
-# Permisos para Cloud Run
-gcloud secrets add-iam-policy-binding multiuser-secrets \
-  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project=TU_PROJECT_ID
-```
-
-### Variables de entorno
-
-- `DATABASE_URL`: Se carga automáticamente desde el secreto JSON montado en `/secrets/multiuser-secrets.json` al iniciar la aplicación.
-- `PUBLIC_BASE_URL`: Se usa para registrar el servidor público en Swagger (valor por defecto: `https://multiuser-ms-695418284847.southamerica-west1.run.app`).
-- `PORT`: Cloud Run fija el valor (8080); mantenla si ejecutas el servicio en local.
-
-### Cómo funciona
-
-1. **En Cloud Build:** El secreto se carga como variable de entorno `MULTIUSER_SECRETS_JSON` y se usa para extraer `DATABASE_URL` durante las migraciones de Prisma.
-2. **En Cloud Run:** El secreto se monta como archivo en `/secrets/multiuser-secrets.json` y la aplicación lo lee al iniciar para cargar `DATABASE_URL` en `process.env`.
-3. **En desarrollo local:** Usa variables de entorno directamente o crea un archivo `.env` (no se sube a Git).
-
-## Scripts npm
-
-| Script             | Descripción                                                                     |
-|--------------------|---------------------------------------------------------------------------------|
-| `npm run build`    | Compila TypeScript hacia `dist/`.                                               |
-| `npm run start`    | Ejecuta la app en modo producción (`node dist/main`).                           |
-| `npm run start:dev`| Útil para depuración local con recarga en caliente.                             |
-| `npm run start:prod`| Alias para ejecutar directamente la versión compilada.                         |
-
-> El flujo operativo estándar no depende de `start:dev`; lo normal es desplegar mediante Cloud Build.
-
-## Flujo de despliegue
-
-1. Al hacer push a `main`, Cloud Build se dispara mediante el `trigger` configurado.
-2. El pipeline (`cloudbuild.yaml`):
-   - Construye la imagen Docker y la sube a Artifact Registry
-   - Ejecuta migraciones de Prisma usando `DATABASE_URL` extraído del secreto `multiuser-secrets`
-   - Despliega la imagen en Cloud Run con el secreto montado como archivo JSON
-3. Cloud Run monta el secreto `multiuser-secrets` como archivo en `/secrets/multiuser-secrets.json`
-4. La aplicación lee el archivo JSON al iniciar y carga `DATABASE_URL` en `process.env`
-5. Prisma se conecta a Neon usando `DATABASE_URL` desde las variables de entorno
-
-## Consumir la API
-
-- Base URL producción: `https://multiuser-ms-695418284847.southamerica-west1.run.app/api`
-- Swagger UI: `https://multiuser-ms-695418284847.southamerica-west1.run.app/api/docs`
-
-### Ejecución local (opcional)
-
-Solo para depuración:
-
-```bash
+# Instalar dependencias
 npm install
-DATABASE_URL="postgresql://..." PUBLIC_BASE_URL="http://localhost:8080" npm run start:dev
-# Swagger quedará disponible en http://localhost:8080/api/docs
+
+# Configurar variables de entorno
+cp .env.example .env
+# Editar .env con tus configuraciones
+
+# Generar Prisma Client
+npx prisma generate
+
+# Ejecutar migraciones
+npx prisma migrate dev
+
+# Iniciar servidor de desarrollo
+npm run start:dev
 ```
 
-Asegúrate de que Neon acepte conexiones desde tu IP o utiliza un túnel seguro.
+El servicio estará disponible en: `http://localhost:8080`
 
-## Cambios recientes destacados
+**Swagger UI**: `http://localhost:8080/api/v1/docs`
 
-- **Migración a Google Secret Manager:** Las credenciales ahora se gestionan mediante el secreto `multiuser-secrets` en lugar de variables de entorno directas. El secreto se monta como archivo JSON y se lee al iniciar la aplicación.
-- Se eliminó el consumo de microservicios externos y el servicio `forms-microservice.service.ts`.
-- Se reorganizó la lógica de selects y SQL en utilidades (`src/utils/prisma-selects.ts`, `src/utils/patient-record.ts`).
-- Se depuraron DTOs y carpetas obsoletas (`components`, `hooks`, `pages`, etc.).
-- Se removieron `@nestjs/axios` y `axios` de `package.json` y `package-lock.json` porque el código ya no los usa.
+---
 
-## Preguntas frecuentes
+## 📚 Documentación
 
-**¿Por qué ya no está Axios?**  
-El microservicio dejó de hacer llamadas HTTP a otros servicios. Toda la información se obtiene directamente desde la base de datos Neon; mantener Axios solo agregaba dependencia innecesaria.
+La documentación completa está organizada en 3 documentos principales:
 
-**¿Cómo aplico migraciones Prisma?**  
-Las migraciones se ejecutan automáticamente en el pipeline de Cloud Build antes del despliegue. El pipeline extrae `DATABASE_URL` del secreto `multiuser-secrets` y lo usa para ejecutar `npx prisma migrate deploy`.
+### 📖 [Documentación del Proyecto](docs/PROYECTO.md)
+**Configuraciones, funciones, lógica, reglas de negocio, arquitectura, seguridad, cómo funciona y cómo se protege.**
 
-**¿Cómo funciona el secreto multiuser-secrets?**  
-El secreto contiene un archivo JSON con `DATABASE_URL`. Cloud Run lo monta como archivo en `/secrets/multiuser-secrets.json` y la aplicación lo lee al iniciar para cargar las variables de entorno. Esto es más seguro que usar variables de entorno directas porque el secreto se gestiona centralmente en Google Secret Manager.
+Incluye:
+- Arquitectura y estructura del proyecto
+- Reglas de negocio detalladas
+- Funcionalidades y endpoints
+- Autenticación y seguridad
+- Base de datos y esquemas
+- Flujo de datos
 
-**¿Hay un frontend?**  
-No dentro de este repositorio. Cualquier referencia pasada a un frontend móvil quedó obsoleta; el código actual solo contiene el backend.
+### ☁️ [Configuración de Google Cloud](docs/GCLOUD_CONFIG.md)
+**Todas las configuraciones de Google Cloud Platform: Cloud Run, Cloud Build, Secret Manager, Artifact Registry, etc.**
 
-## Licencia
+Incluye:
+- Configuración de Cloud Run
+- Pipeline de Cloud Build
+- Gestión de secretos
+- Migraciones automáticas
+- Comandos útiles de GCP
 
-ISC.
+### 🛠️ [Instalación y Mantenimiento](docs/INSTALACION_MANTENIMIENTO.md)
+**Guía completa para instalar, configurar, desarrollar y mantener el proyecto.**
+
+Incluye:
+- Requisitos previos
+- Instalación local paso a paso
+- Configuración de base de datos
+- Desarrollo local
+- Migraciones
+- Testing
+- Troubleshooting
+
+---
+
+## 🛠️ Tecnologías
+
+- **Framework**: NestJS (Node.js/TypeScript)
+- **Base de Datos**: PostgreSQL
+- **ORM**: Prisma
+- **Documentación**: Swagger/OpenAPI
+- **Plataforma**: Google Cloud Run
+
+---
+
+## 📍 URLs del Servicio
+
+### Producción (Cloud Run)
+
+- **Base URL**: `https://multiuser-ms-695418284847.southamerica-west1.run.app`
+- **API Base**: `https://multiuser-ms-695418284847.southamerica-west1.run.app/api/v1`
+- **Swagger UI**: `https://multiuser-ms-695418284847.southamerica-west1.run.app/api/v1/docs`
+- **Health Check**: `https://multiuser-ms-695418284847.southamerica-west1.run.app/api/v1/multiuser/health`
+
+---
+
+## 🔐 Autenticación
+
+El servicio utiliza autenticación basada en **RUT** enviado en el header `X-User-RUT`. No se usa JWT.
+
+**Ejemplo de request:**
+```bash
+curl -X GET "https://multiuser-ms-695418284847.southamerica-west1.run.app/api/v1/multiuser/my-family-group" \
+  -H "X-User-RUT: 12345678-9" \
+  -H "Content-Type: application/json"
+```
+
+---
+
+## 📝 Comandos Útiles
+
+```bash
+# Desarrollo
+npm run start:dev          # Servidor con hot-reload
+npm run start:debug        # Servidor con debugging
+
+# Producción
+npm run build              # Compilar TypeScript
+npm run start:prod         # Ejecutar versión compilada
+
+# Base de Datos
+npx prisma generate        # Generar Prisma Client
+npx prisma migrate dev     # Crear y aplicar migraciones
+npx prisma studio          # GUI para base de datos
+
+# Testing
+npm test                   # Ejecutar tests
+npm run test:watch         # Tests en modo watch
+npm run test:cov           # Tests con cobertura
+```
+
+---
+
+## 📁 Estructura del Proyecto
+
+```
+multiuser-ms/
+├── docs/                      # Documentación
+│   ├── PROYECTO.md           # Documentación del proyecto
+│   ├── GCLOUD_CONFIG.md      # Configuración de GCP
+│   └── INSTALACION_MANTENIMIENTO.md
+├── prisma/                    # Schema y migraciones
+│   ├── schema.prisma
+│   └── migrations/
+├── src/                       # Código fuente
+│   ├── auth/                  # Autenticación
+│   ├── multiuser/             # Módulo principal
+│   ├── prisma/                # Servicio de Prisma
+│   └── main.ts                # Bootstrap
+├── Dockerfile                 # Imagen Docker
+├── cloudbuild.yaml            # Pipeline de Cloud Build
+└── package.json
+```
+
+---
+
+## 🔗 Enlaces Relacionados
+
+- [Documentación Completa](docs/)
+- [Swagger UI (Producción)](https://multiuser-ms-695418284847.southamerica-west1.run.app/api/v1/docs)
+
+---
+
+## 👥 Contribuir
+
+Para contribuir al proyecto, consulta la documentación en:
+- [Instalación y Mantenimiento](docs/INSTALACION_MANTENIMIENTO.md) - Para configurar el entorno de desarrollo
+
+---
+
+**Última actualización**: 2025-11-28
